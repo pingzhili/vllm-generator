@@ -9,29 +9,29 @@ model_config:
 
 generation_config:
   batch_size: 8
-  num_repeats: 3
+  num_repeats: 16
   repeat_strategy: "independent"
   error_handling: "retry"
   max_retries: 3
   checkpoint_frequency: 25
 
 data_config:
-  question_column: "question"
-  output_format: "wide"
+  question_column: "problem"
+  output_format: "nested"
   output_column_prefix: "response"
   use_chat_template: true
-  system_prompt: "You are a helpful AI assistant."
+#  system_prompt: "You are a helpful AI assistant."
 
 parallel_config:
   mode: "multi_server"
-  num_workers: 4
-  worker_gpus: [0, 1, 2, 3, 4, 5, 6, 7]  # 8 GPUs total, 2 per worker
+  num_workers: 8
+  worker_gpus: [0, 1, 2, 3, 4, 5, 6, 7]  # 8 GPUs total, 1 per worker
   sharding_strategy: "balanced"
-  ports: 8000
+  ports: 2333
   dynamic_batching: true
   result_aggregation: "sequential"
   worker_failure_mode: "retry"
-  max_worker_retries: 2
+  max_worker_retries: 5
 
 logging_config:
   level: "INFO"
