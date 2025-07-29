@@ -1,0 +1,35 @@
+# Configuration for Ray-based distributed generation
+model_config:
+  model: "Qwen/Qwen3-8B"
+  temperature: 0.6
+  top_p: 0.95
+  max_tokens: 32768
+  gpu_memory_utilization: 0.9
+
+generation_config:
+  batch_size: 64
+  num_repeats: 1
+  error_handling: "skip"
+  checkpoint_frequency: 200
+  prefetch_batches: 3
+
+data_config:
+  question_column: "text"
+  output_format: "wide"
+  output_column_prefix: "completion"
+  prompt_template: "{question}\n\nResponse:"
+  add_eos_token: true
+
+parallel_config:
+  mode: "ray"
+  num_workers: 8
+  ray_address: "auto"  # Use "ray://head-node:10001" for existing cluster
+  ray_num_gpus: 1
+  ray_num_cpus: 4
+  sharding_strategy: "balanced"
+  enable_work_stealing: true
+
+logging_config:
+  level: "INFO"
+  save_metadata: true
+  progress_bar: true

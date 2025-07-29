@@ -1,0 +1,22 @@
+# Simple configuration for basic generation
+model_config:
+  model: "Qwen/Qwen3-8B"
+  temperature: 0.6
+  top_p: 0.95
+  max_tokens: 32768
+  gpu_memory_utilization: 0.9
+
+generation_config:
+  batch_size: 32
+  num_repeats: 1
+  error_handling: "skip"
+  checkpoint_frequency: 100
+
+data_config:
+  question_column: "question"
+  output_format: "wide"
+  output_column_prefix: "response"
+
+logging_config:
+  level: "INFO"
+  progress_bar: true

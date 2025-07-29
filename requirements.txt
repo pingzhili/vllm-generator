@@ -1,0 +1,18 @@
+# Core dependencies
+pandas
+pyarrow
+numpy
+pyyaml
+tqdm
+vllm
+
+# Optional: Ray for distributed processing
+# ray>=2.0.0
+
+# Development dependencies
+pytest
+pytest-cov
+black
+isort
+flake8
+mypy
