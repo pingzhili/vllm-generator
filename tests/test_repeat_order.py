@@ -1,6 +1,5 @@
 """Tests for repeated sampling and order preservation."""
 
-import pytest
 import pandas as pd
 from pathlib import Path
 

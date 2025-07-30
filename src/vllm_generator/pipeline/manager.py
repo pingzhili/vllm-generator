@@ -1,10 +1,7 @@
 """Pipeline manager for orchestrating the generation process."""
 
-import asyncio
-from typing import Dict, Any, Optional
-from pathlib import Path
+from typing import Dict, Any, List
 
-from .base import Pipeline, PipelineStep
 from .batch_processor import BatchProcessor
 from ..config.schemas import Config
 from ..models import GenerationManager

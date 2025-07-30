@@ -1,7 +1,6 @@
 """Logging utilities using loguru."""
 
 import sys
-from pathlib import Path
 from typing import Optional
 from loguru import logger
 

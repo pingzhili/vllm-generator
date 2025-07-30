@@ -1,8 +1,7 @@
 """Base pipeline classes and interfaces."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
-from pathlib import Path
+from typing import Any, Dict
 
 from ..config.schemas import Config
 from ..utils import get_logger

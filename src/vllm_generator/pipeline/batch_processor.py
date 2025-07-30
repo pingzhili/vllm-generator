@@ -1,7 +1,7 @@
 """Batch processor for efficient data processing."""
 
 import asyncio
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 import time
 import json
@@ -10,7 +10,7 @@ from tqdm.asyncio import tqdm
 from ..config.schemas import Config
 from ..data import DataLoader, DataWriter, DataProcessor
 from ..models import GenerationManager
-from ..utils import get_logger, generate_batch_id, get_timestamp
+from ..utils import get_logger, get_timestamp
 
 
 class CheckpointManager:

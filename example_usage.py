@@ -4,7 +4,6 @@ import asyncio
 import pandas as pd
 from pathlib import Path
 
-from vllm_generator import Pipeline, Config
 from vllm_generator.config import ConfigParser
 from vllm_generator.pipeline import GenerationPipeline
 
@@ -169,7 +168,7 @@ async def filtered_processing_example():
     }
     
     config = ConfigParser.from_dict(config_dict)
-    pipeline = GenerationPipeline(config)
+    GenerationPipeline(config)
     
     # This would process only programming questions with difficulty <= 2
     print("Will process filtered data: programming questions with difficulty <= 2")
@@ -195,7 +194,7 @@ async def checkpoint_resume_example():
         }
     }
     
-    config = ConfigParser.from_dict(config_dict)
+    ConfigParser.from_dict(config_dict)
     
     # First run - will create checkpoints
     print("First run - creating checkpoints...")

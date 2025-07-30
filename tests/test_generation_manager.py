@@ -1,8 +1,7 @@
 """Tests for generation manager."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
+from unittest.mock import AsyncMock
 
 from vllm_generator.models import GenerationManager
 from vllm_generator.config.schemas import Config, DataConfig, ModelConfig, GenerationConfig

@@ -1,9 +1,7 @@
 """Tests for utility functions."""
 
 import pytest
-from pathlib import Path
 import pandas as pd
-import json
 
 from vllm_generator.utils import (
     generate_batch_id,

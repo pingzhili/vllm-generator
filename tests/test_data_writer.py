@@ -1,6 +1,5 @@
 """Tests for data writer."""
 
-import pytest
 import pandas as pd
 from pathlib import Path
 

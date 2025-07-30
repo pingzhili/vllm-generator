@@ -7,7 +7,7 @@ import yaml
 from vllm_generator.config import ConfigParser, Config
 from vllm_generator.config.schemas import (
     DataConfig, ModelConfig, GenerationConfig,
-    ProcessingConfig, RetryConfig, LoggingConfig
+    LoggingConfig
 )
 
 

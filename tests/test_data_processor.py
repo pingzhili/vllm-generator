@@ -1,6 +1,5 @@
 """Tests for data processor."""
 
-import pytest
 import pandas as pd
 
 from vllm_generator.data import DataProcessor

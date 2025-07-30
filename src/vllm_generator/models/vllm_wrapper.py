@@ -1,7 +1,7 @@
 """vLLM client wrapper for API interactions."""
 
 import asyncio
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 import httpx
 from tenacity import (
     retry,

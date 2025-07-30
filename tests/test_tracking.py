@@ -189,7 +189,7 @@ class TestExecutionTracker:
         tracker = ExecutionTracker()
         
         with pytest.raises(ValueError):
-            with tracker.track_request("Test prompt") as metrics:
+            with tracker.track_request("Test prompt"):
                 raise ValueError("Test error")
         
         summary = tracker.get_summary()

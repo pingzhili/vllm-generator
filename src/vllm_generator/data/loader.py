@@ -1,7 +1,6 @@
 """Data loader for parquet files."""
 
-from pathlib import Path
-from typing import Optional, List, Iterator
+from typing import List, Iterator
 import pandas as pd
 import pyarrow.parquet as pq
 

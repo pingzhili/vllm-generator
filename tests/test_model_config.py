@@ -1,6 +1,5 @@
 """Tests for model configuration and management."""
 
-import pytest
 from vllm_generator.models import ModelManager, ModelEndpoint
 from vllm_generator.config.schemas import ModelConfig
 

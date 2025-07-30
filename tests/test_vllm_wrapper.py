@@ -3,7 +3,6 @@
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch
-import asyncio
 
 from vllm_generator.models import VLLMClient
 from vllm_generator.config.schemas import ModelConfig, GenerationConfig, RetryConfig

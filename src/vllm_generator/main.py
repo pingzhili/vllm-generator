@@ -4,8 +4,6 @@ import asyncio
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
-import yaml
 
 from .config import ConfigParser, Config
 from .pipeline import GenerationPipeline

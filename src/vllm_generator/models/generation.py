@@ -1,13 +1,12 @@
 """Generation manager for handling text generation with vLLM."""
 
 import asyncio
-from typing import List, Dict, Any, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor
+from typing import List, Dict, Any, Optional, Union
 import time
 
 from .vllm_wrapper import VLLMClient
 from .config import ModelManager, ModelEndpoint
-from ..config.schemas import Config, ModelConfig
+from ..config.schemas import Config
 from ..data.processor import DataProcessor
 from ..utils import get_logger, distribute_items
 
@@ -93,7 +92,7 @@ class GenerationManager:
                 # Generate single sample
                 return await client.generate(prompt)
         
-        except Exception as e:
+        except Exception:
             self.model_manager.mark_unhealthy(endpoint)
             raise
     

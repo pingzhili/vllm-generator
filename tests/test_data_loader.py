@@ -1,7 +1,6 @@
 """Tests for data loader."""
 
 import pytest
-import pandas as pd
 from pathlib import Path
 
 from vllm_generator.data import DataLoader
