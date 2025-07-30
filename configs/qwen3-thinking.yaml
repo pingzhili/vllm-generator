@@ -1,0 +1,41 @@
+# Configuration for single vLLM server with Qwen model
+# 
+# For parallel processing, use multiple instances with different splits:
+# Terminal 1: vllm-generator generate -c qwen3_8b_single_server.yaml --port 8000 --split-id 1 --num-splits 8
+# Terminal 2: vllm-generator generate -c qwen3_8b_single_server.yaml --port 8001 --split-id 2 --num-splits 8
+# ... etc.
+
+data:
+  input_path: "/root/open-math-reasoning/sample_1k.parquet"
+  output_path: "/root/open-math-reasoning/sample_1k_cot_res_qwen3_8b_rep_32.parquet"
+  input_column: "problem"
+  output_column: "response"
+
+model:
+  url: "http://localhost:8000"  # Can be overridden with --port argument
+
+generation:
+  num_samples: 32
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  max_tokens: 32768
+  enable_thinking: true  # Set to true to enable thinking mode for reasoning
+  # You can also add custom extra_body parameters:
+  # extra_body:
+  #   custom_param: value
+
+processing: {}
+
+retry:
+  max_retries: 3
+  retry_delay: 1.0
+  timeout: 300
+  backoff_factor: 2.0
+
+logging:
+  level: "INFO"
+  file: "logs/qwen_generation.log"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}"
+  rotation: "1 day"
+  retention: "14 days"
