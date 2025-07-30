@@ -89,8 +89,8 @@ class BatchProcessor:
         self.logger = get_logger("BatchProcessor")
         
         # Initialize components
-        self.data_loader = DataLoader(config.data)
-        self.data_writer = DataWriter(config.data)
+        self.data_loader = DataLoader(config.data, config.processing)
+        self.data_writer = DataWriter(config.data, config.processing)
         self.data_processor = DataProcessor()
         self.checkpoint_manager = CheckpointManager(config.processing.checkpoint_dir)
     
