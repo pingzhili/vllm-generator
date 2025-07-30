@@ -20,7 +20,7 @@ run_split() {
         --config "$CONFIG_FILE" \
         --port "$port" \
         --split-id "$split_id" \
-        --num-splits "$NUM_SPLITS"  &
+        --num-splits "$NUM_SPLITS" --enable-thinking  &
     
     echo "Split $split_id started with PID $!"
 }
