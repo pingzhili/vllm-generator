@@ -20,8 +20,6 @@ generation:
   max_tokens: 2048
 
 processing:
-  batch_size: 64
-  checkpoint_interval: 100
   # Split configuration can be provided here or via CLI
   # split_id: 1
   # num_splits: 4

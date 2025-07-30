@@ -30,9 +30,6 @@ Examples:
   # Generate with data splitting for parallel processing
   vllm-generator generate -c config.yaml --split-id 1 --num-splits 4
 
-  # Resume from checkpoint
-  vllm-generator generate -c config.yaml --resume
-
   # Validate configuration
   vllm-generator validate --config config.yaml
 
@@ -143,16 +140,6 @@ def add_generate_args(parser: argparse.ArgumentParser) -> None:
         type=str,
         help="Column name for output text (default: response)"
     )
-    data_group.add_argument(
-        "--checkpoint-dir",
-        type=Path,
-        help="Directory for saving checkpoints (default: ./checkpoints)"
-    )
-    data_group.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from last checkpoint"
-    )
     
     # Model configuration
     model_group = parser.add_argument_group("Model Configuration")
@@ -212,11 +199,6 @@ def add_generate_args(parser: argparse.ArgumentParser) -> None:
     
     # Processing options
     proc_group = parser.add_argument_group("Processing Options")
-    proc_group.add_argument(
-        "--batch-size", "-b",
-        type=int,
-        help="Batch size for processing (default: 32)"
-    )
     proc_group.add_argument(
         "--split-id",
         type=int,
@@ -308,13 +290,10 @@ def generate_command(args: argparse.Namespace) -> int:
         )
         
         # Print summary
-        if 'total_prompts' in results:
-            logger.info(f"✓ Processed {results['total_prompts']} prompts")
-            logger.info(f"✓ Generated {results['total_responses']} responses")
-        else:
-            logger.info(f"✓ Generated {results.get('total_processed', 0)} responses")
+        logger.info(f"✓ Processed {results['total_items']} items")
+        logger.info(f"✓ Generated {results['total_responses']} responses")
         logger.info(f"✓ Processing time: {results['processing_time']:.2f}s")
-        logger.info(f"✓ Throughput: {results['prompts_per_second']:.2f} prompts/s")
+        logger.info(f"✓ Throughput: {results['items_per_second']:.2f} items/s")
         
         return 0
     

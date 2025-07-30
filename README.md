@@ -4,11 +4,11 @@ A scalable data generation pipeline for processing datasets through vLLM models 
 
 ## Features
 
+- **OpenAI API Integration**: Uses official OpenAI client for robust vLLM communication
 - **Parquet I/O**: Load questions from parquet files and save responses
-- **vLLM Integration**: Send prompts to served vLLM models via HTTP API
+- **Individual Processing**: Process each question one-by-one (no batching complexity)
 - **Repeated Sampling**: Generate multiple responses per input with temperature scheduling
 - **Parallel Processing**: Split large datasets for parallel processing across multiple instances
-- **Checkpointing**: Resume interrupted processing from checkpoints
 - **Progress Tracking**: Real-time progress bars with loguru integration
 - **Flexible Configuration**: YAML-based configuration with CLI overrides
 - **Thinking Mode**: Support for reasoning models with `enable_thinking` parameter
@@ -156,12 +156,44 @@ See the `configs/` directory for example configurations:
 
 ## Architecture
 
-The pipeline follows a simple synchronous architecture:
+The pipeline follows a clean, simple architecture:
 
 1. **DataLoader**: Loads parquet files and handles data splitting
-2. **VLLMClient**: Synchronous HTTP client for vLLM API communication
-3. **BatchProcessor**: Processes data in batches with checkpoint support
+2. **VLLMClient**: Uses OpenAI API client for robust vLLM communication
+3. **SimpleProcessor**: Processes each item individually (no batching)
 4. **DataWriter**: Saves results with split-aware file naming
+
+## OpenAI API Integration
+
+The vLLM client now uses the official OpenAI Python client for reliable communication:
+
+```python
+from openai import OpenAI
+
+# This is how vLLMClient connects internally
+client = OpenAI(
+    api_key="EMPTY",  # vLLM doesn't require a real API key
+    base_url="http://localhost:8000/v1"  # vLLM server endpoint
+)
+
+# Uses chat completions API
+response = client.chat.completions.create(
+    model="gpt-3.5-turbo",  # vLLM uses whatever model is loaded
+    messages=[{"role": "user", "content": "Your prompt"}],
+    max_tokens=512,
+    temperature=0.7,
+    extra_body={
+        "top_k": 20,  # vLLM-specific parameters
+        "chat_template_kwargs": {"enable_thinking": True}
+    }
+)
+```
+
+Benefits:
+- **Robust Error Handling**: Built-in retry logic and proper exception types
+- **Connection Pooling**: Efficient HTTP connection management
+- **Standard Interface**: Familiar OpenAI API patterns
+- **Type Safety**: Full type hints and validation
 
 ## Development
 

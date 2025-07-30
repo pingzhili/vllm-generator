@@ -24,9 +24,7 @@ generation:
     # They will be passed to vLLM's extra_body
     custom_param: "value"
 
-processing:
-  batch_size: 8
-  checkpoint_interval: 50
+processing: {}
 
 retry:
   max_retries: 5

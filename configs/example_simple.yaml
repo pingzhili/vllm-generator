@@ -14,8 +14,7 @@ generation:
   temperature: 1.0
   max_tokens: 512
 
-processing:
-  batch_size: 32
+processing: {}
 
 logging:
   level: "INFO"

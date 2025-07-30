@@ -25,11 +25,7 @@ generation:
   # extra_body:
   #   custom_param: value
 
-processing:
-  batch_size: 8
-  checkpoint_interval: 100
-  checkpoint_dir: "./checkpoints/qwen_run"
-  resume: false
+processing: {}
 
 retry:
   max_retries: 3
