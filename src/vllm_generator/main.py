@@ -96,7 +96,7 @@ def create_parser() -> argparse.ArgumentParser:
     proc_group.add_argument("--checkpoint-frequency", type=int, default=100,
                            help="Save checkpoint every N batches")
     proc_group.add_argument("--resume-from-checkpoint", help="Resume from checkpoint file")
-    proc_group.add_argument("--num-workers", type=int, default=4,
+    proc_group.add_argument("--num-data-workers", type=int, default=4,
                            help="Number of data loading workers")
     
     # Prompt Configuration
