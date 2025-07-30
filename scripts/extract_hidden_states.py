@@ -54,7 +54,7 @@ def apply_chat_template(strings, tokenizer):
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=False
+                enable_thinking=True
             )
             templated = templated + "<think>\n\n"
         else:
@@ -81,7 +81,9 @@ def extract_hidden_states(model, tokenizer, texts):
 
             # Forward pass
             outputs = model(**inputs, output_hidden_states=True)
-            last_hidden_states = outputs.hidden_states[-1][0, -1]  # [batch_size, seq_len, hidden_dim]
+            # last_hidden_states = outputs.hidden_states[-1][0, -1]  # [batch_size, seq_len, hidden_dim]
+            last_hidden_states = torch.stack([hs[0, -1] for hs in outputs.hidden_states]) # last token all layers
+            print(f"Last hidden states shape: {last_hidden_states.shape}")
             text_to_hidden_states[text] = last_hidden_states.detach().cpu()
     
     return text_to_hidden_states
