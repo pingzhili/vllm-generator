@@ -11,7 +11,7 @@ setup(
     description="Scalable text generation for dataframes using vLLM",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/vllm-generator",
+    url="https://github.com/pingzhili/vllm-generator",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
