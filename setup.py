@@ -20,6 +20,7 @@ setup(
         "click>=8.0.0",
         "tenacity>=8.2.0",
         "tqdm>=4.65.0",
+        "vllm"
     ],
     extras_require={
         "dev": [
