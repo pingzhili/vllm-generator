@@ -43,7 +43,8 @@ class VLLMClient:
         # Store default headers if any
         self.headers = model_config.headers or {}
         
-        self.logger.debug(f"Initialized OpenAI client for vLLM at {base_url}")
+        self.logger.info(f"Initialized OpenAI client for vLLM at {base_url}")
+        self.logger.info(f"Generation config: {generation_config}")
     
     def close(self):
         """Close the client (OpenAI client handles connection pooling)."""
@@ -124,7 +125,7 @@ class VLLMClient:
             if "chat_template_kwargs" not in extra_body:
                 extra_body["chat_template_kwargs"] = {}
             extra_body["chat_template_kwargs"]["enable_thinking"] = self.generation_config.enable_thinking
-            self.logger.debug(f"Setting enable_thinking to {self.generation_config.enable_thinking}")
+            self.logger.info(f"Setting enable_thinking to {self.generation_config.enable_thinking}")
         
         # Merge with any custom extra_body from config
         if self.generation_config.extra_body:
