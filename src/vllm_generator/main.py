@@ -278,7 +278,8 @@ def main():
         
         # Create model config
         model_config = ModelConfig.from_dict(config.get("model_config", {}))
-        
+
+        logger.info(f"Parallel mode: {args.parallel_mode}")
         # Create pipeline manager
         manager = PipelineManager(
             model_config=model_config,
