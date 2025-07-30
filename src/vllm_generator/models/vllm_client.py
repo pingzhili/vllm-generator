@@ -156,7 +156,7 @@ class VLLMClient:
         params = self._prepare_chat_completion_params(prompt, temperature, sample_idx)
         
         try:
-            self.logger.info(paramst)
+            self.logger.info(params)
             response = self.client.chat.completions.create(**params)
             
             # Convert OpenAI response to our expected format
