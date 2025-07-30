@@ -4,16 +4,14 @@ Extract hidden states from unique strings in a parquet file.
 
 Usage:
     python extract_hidden_states.py data.parquet question_column model_name output.pt
-    python extract_hidden_states.py /path/to/data.parquet problem Qwen/Qwen3-8B hidden_states.pt
+    python extract_hidden_states.py /root/open-math-reasoning/sample_c7_300.parquet problem Qwen/Qwen3-8B /root/open-math-reasoning/sample_c7_300_problem_last_hidden_states.pt
 """
 
 import argparse
-import sys
 from pathlib import Path
 import pandas as pd
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import numpy as np
 from tqdm import tqdm
 
 
@@ -82,7 +80,7 @@ def extract_hidden_states(model, tokenizer, texts):
             ).to(model.device)
 
             # Forward pass
-            outputs = model(**inputs)
+            outputs = model(**inputs, output_hidden_states=True)
             last_hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_dim]
             text_to_hidden_states[text] = last_hidden_states.detach().cpu()
     
