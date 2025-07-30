@@ -139,15 +139,6 @@ class VLLMClient:
         
         return request
     
-    @retry(
-        stop=lambda r: r.attempt_number > r.retry_object.retry_config.max_retries,
-        wait=lambda r: wait_exponential(
-            multiplier=r.retry_object.retry_config.retry_delay,
-            max=r.retry_object.retry_config.retry_delay * r.retry_object.retry_config.backoff_factor ** 3
-        )(r),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.HTTPStatusError)),
-        before_sleep=before_sleep_log(get_logger("VLLMClient"), "WARNING")
-    )
     async def generate(
         self,
         prompt: str,
@@ -157,19 +148,34 @@ class VLLMClient:
         """Generate completion for a single prompt."""
         request = self._prepare_request(prompt, temperature, sample_idx)
         
-        try:
-            response = await self.client.post(
-                self.completions_endpoint,
-                json=request
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            self.logger.error(f"HTTP error {e.response.status_code}: {e.response.text}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Generation failed: {e}")
-            raise
+        # Create a retry decorator with the specific configuration
+        retry_decorator = retry(
+            stop=stop_after_attempt(self.retry_config.max_retries),
+            wait=wait_exponential(
+                multiplier=self.retry_config.retry_delay,
+                max=self.retry_config.retry_delay * self.retry_config.backoff_factor ** 3
+            ),
+            retry=retry_if_exception_type((httpx.TimeoutException, httpx.HTTPStatusError)),
+            before_sleep=before_sleep_log(self.logger, "WARNING")
+        )
+        
+        @retry_decorator
+        async def _generate():
+            try:
+                response = await self.client.post(
+                    self.completions_endpoint,
+                    json=request
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                self.logger.error(f"HTTP error {e.response.status_code}: {e.response.text}")
+                raise
+            except Exception as e:
+                self.logger.error(f"Generation failed: {e}")
+                raise
+        
+        return await _generate()
     
     async def generate_batch(
         self,
