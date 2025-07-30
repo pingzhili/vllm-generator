@@ -35,3 +35,15 @@ echo "All splits started. Waiting for completion..."
 wait
 
 echo "All splits completed!"
+
+# Merge the split files back together
+echo "Merging split files..."
+OUTPUT_PATH=$(python -c "
+import yaml
+with open('$CONFIG_FILE', 'r') as f:
+    config = yaml.safe_load(f)
+print(config['data']['output_path'])
+")
+
+python scripts/merge_splits.py "$OUTPUT_PATH" $NUM_SPLITS
+echo "Processing complete! Final output: $OUTPUT_PATH"
