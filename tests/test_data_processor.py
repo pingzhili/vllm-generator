@@ -3,7 +3,7 @@ import pandas as pd
 import json
 from pathlib import Path
 
-from src import DataProcessor
+from vllm_generator import DataProcessor
 
 
 class TestDataProcessor:

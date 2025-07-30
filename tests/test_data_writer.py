@@ -3,7 +3,7 @@ import pandas as pd
 import json
 from pathlib import Path
 
-from src import DataWriter
+from vllm_generator import DataWriter
 
 
 class TestDataWriter:

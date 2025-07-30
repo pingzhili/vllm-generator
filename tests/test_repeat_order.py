@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import Mock
 
-from src import GenerationManager
-from src import GenerationConfig
-from src import MockVLLMModel
+from vllm_generator import GenerationManager
+from vllm_generator import GenerationConfig
+from vllm_generator import MockVLLMModel
 
 
 class TestRepeatOrder:

@@ -2,8 +2,8 @@ import pytest
 import os
 import json
 
-from src import ConfigParser
-from src import validate_config, create_config_from_args
+from vllm_generator import ConfigParser
+from vllm_generator import validate_config, create_config_from_args
 
 
 class TestConfigParser:

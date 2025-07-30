@@ -1,8 +1,8 @@
 import pytest
 import time
 
-from src import ModelConfig
-from src import MockVLLMModel, VLLMModel
+from vllm_generator import ModelConfig
+from vllm_generator import MockVLLMModel, VLLMModel
 
 
 class TestMockVLLMModel:

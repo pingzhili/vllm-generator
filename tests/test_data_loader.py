@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 from pathlib import Path
 
-from src import DataLoader
+from vllm_generator import DataLoader
 
 
 class TestDataLoader:

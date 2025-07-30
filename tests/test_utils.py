@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 import tempfile
 
-from src import setup_logging, get_logger, ProgressLogger
-from src import (
+from vllm_generator import setup_logging, get_logger, ProgressLogger
+from vllm_generator import (
     parse_args_string, parse_value, load_module_from_path,
     parse_gpu_list, format_bytes, format_duration,
     validate_output_path, merge_configs

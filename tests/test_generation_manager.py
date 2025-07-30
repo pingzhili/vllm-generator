@@ -2,9 +2,9 @@ import pytest
 import time
 from unittest.mock import Mock, patch
 
-from src import ModelConfig, GenerationConfig
-from src import GenerationManager
-from src import MockVLLMModel
+from vllm_generator import ModelConfig, GenerationConfig
+from vllm_generator import GenerationManager
+from vllm_generator import MockVLLMModel
 
 
 class TestGenerationManager:

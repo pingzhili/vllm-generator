@@ -2,8 +2,8 @@ import pytest
 import time
 import json
 
-from src import GenerationTracker, DistributedTracker
-from src import MetricsCollector, TokenMetrics
+from vllm_generator import GenerationTracker, DistributedTracker
+from vllm_generator import MetricsCollector, TokenMetrics
 
 
 class TestGenerationTracker:

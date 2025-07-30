@@ -1,7 +1,7 @@
 import pytest
 import json
 
-from src import ModelConfig, GenerationConfig
+from vllm_generator import ModelConfig, GenerationConfig
 
 
 class TestModelConfig:
