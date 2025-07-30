@@ -51,8 +51,7 @@ class GenerationConfig(BaseModel):
     presence_penalty: float = Field(0.0, description="Presence penalty")
     frequency_penalty: float = Field(0.0, description="Frequency penalty")
     enable_thinking: bool = Field(True, description="Enable thinking mode for reasoning models")
-    extra_body: Optional[Dict[str, Any]] = Field(None, description="Additional parameters for vLLM extra_body")
-    
+
     @field_validator("temperature")
     def validate_temperature(cls, v: Union[float, List[float]], info) -> Union[float, List[float]]:
         if isinstance(v, list):
