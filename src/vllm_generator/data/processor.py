@@ -18,8 +18,14 @@ class DataProcessor:
         add_bos_token: bool = False,
         add_eos_token: bool = False,
         preprocessing_fn: Optional[Callable] = None,
-        tokenizer: Optional[Any] = None
+        tokenizer: Optional[Any] = None,
+        *args,
+        **kwargs,
     ):
+        if len(args) > 0:
+            logger.warning(f"Ignoring positional arguments: {args}")
+        if len(kwargs) > 0:
+            logger.warning(f"Ignoring keyword arguments: {kwargs}")
         self.prompt_template = prompt_template or "{question}"
         self.system_prompt = system_prompt
         self.few_shot_examples = few_shot_examples
