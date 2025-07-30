@@ -2,7 +2,7 @@
 
 from typing import Dict, Any, List
 
-from .batch_processor import BatchProcessor
+from .simple_processor import SimpleProcessor
 from ..config.schemas import Config
 from ..models import VLLMClient
 from ..utils import get_logger, setup_logger
@@ -20,7 +20,7 @@ class GenerationPipeline:
         setup_logger(config.logging)
         
         # Initialize components
-        self.batch_processor = BatchProcessor(config)
+        self.processor = SimpleProcessor(config)
         self.vllm_client = None
     
     def initialize(self) -> None:
@@ -54,7 +54,7 @@ class GenerationPipeline:
             # Process data
             self.logger.info("Starting data processing...")
             
-            results = self.batch_processor.process(
+            results = self.processor.process(
                 self.vllm_client,
                 dry_run=dry_run,
                 progress_bar=progress_bar

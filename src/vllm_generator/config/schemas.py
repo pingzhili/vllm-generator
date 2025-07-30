@@ -65,10 +65,6 @@ class GenerationConfig(BaseModel):
 class ProcessingConfig(BaseModel):
     """Configuration for processing parameters."""
     
-    batch_size: int = Field(32, ge=1, description="Batch size for processing")
-    checkpoint_interval: int = Field(100, ge=1, description="Save checkpoint every N batches")
-    checkpoint_dir: Path = Field(Path("./checkpoints"), description="Checkpoint directory")
-    resume: bool = Field(False, description="Resume from checkpoint")
     split_id: Optional[int] = Field(None, ge=1, description="Split ID to process (1-indexed)")
     num_splits: Optional[int] = Field(None, ge=1, description="Total number of splits")
     
@@ -124,9 +120,6 @@ class Config(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization validation."""
         super().model_post_init(__context)
-        
-        # Ensure checkpoint directory exists
-        self.processing.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         # Ensure log directory exists if log file is specified
         if self.logging.file:

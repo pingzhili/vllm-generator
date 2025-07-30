@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Start vLLM servers on 8 GPUs with ports 8000-8007
-MODEL_NAME="Qwen/Qwen3-8B"
+MODEL_NAME="Qwen/Qwen3-4B"
 #VLLM_ARGS="--enable-reasoning --reasoning-parser deepseek_r1"
 VLLM_ARGS=""
 
