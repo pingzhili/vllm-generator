@@ -77,6 +77,10 @@ def create_parser() -> argparse.ArgumentParser:
                              help="Temperature values for each repeat (comma-separated)")
     repeat_group.add_argument("--seed-increment", type=int, default=1,
                              help="Increment seed by this value for each repeat")
+    repeat_group.add_argument("--repeat-order", 
+                             choices=["item_first", "batch_first"],
+                             default="item_first", 
+                             help="Processing order: item_first (AAAA BBBB) or batch_first (ABCD ABCD)")
     repeat_group.add_argument("--aggregate-responses", action="store_true",
                              help="Aggregate repeated responses into single output")
     repeat_group.add_argument("--aggregation-method", 

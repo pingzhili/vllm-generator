@@ -142,7 +142,9 @@ class SimplePipeline(BasePipeline):
                 items,
                 num_repeats=self.generation_config.num_repeats,
                 repeat_strategy=self.generation_config.repeat_strategy,
-                temperature_schedule=self.generation_config.temperature_schedule
+                temperature_schedule=self.generation_config.temperature_schedule,
+                repeat_order=self.generation_config.repeat_order,
+                progress_callback=self._progress_callback
             )
         else:
             results = self.generation_manager.generate_batch(
@@ -198,16 +200,23 @@ class SimplePipeline(BasePipeline):
             "total_samples": len(df)
         }
     
-    def _progress_callback(self, completed: int, total: int):
-        """Progress callback for tracking"""
-        if self.tracker:
-            self.tracker.update_progress(completed, total)
+    def _progress_callback(self, completed: int, total: int, progress_type: str = "items"):
+        """Progress callback for tracking
         
-        # Save checkpoint if needed
-        if self._should_save_checkpoint(completed):
+        Args:
+            completed: Number of completed units
+            total: Total number of units
+            progress_type: Type of progress ("items", "repeats")
+        """
+        if self.tracker:
+            self.tracker.update_progress(completed, total, progress_type)
+        
+        # Save checkpoint if needed (only for item progress)
+        if progress_type == "items" and self._should_save_checkpoint(completed):
             checkpoint_data = {
                 "completed_items": completed,
                 "total_items": total,
-                "metrics": self.generation_manager.get_metrics()
+                "metrics": self.generation_manager.get_metrics(),
+                "repeat_order": self.generation_config.repeat_order
             }
             self._save_checkpoint(checkpoint_data)

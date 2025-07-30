@@ -80,9 +80,42 @@ class GenerationManager:
         num_repeats: int,
         repeat_strategy: str = "independent",
         temperature_schedule: Optional[List[float]] = None,
-        sampling_params: Optional[Dict[str, Any]] = None
+        sampling_params: Optional[Dict[str, Any]] = None,
+        repeat_order: str = "item_first",
+        progress_callback: Optional[Callable] = None
     ) -> List[Dict[str, Any]]:
-        """Generate multiple responses per item"""
+        """Generate multiple responses per item
+        
+        Args:
+            items: List of items to generate for
+            num_repeats: Number of times to generate per item
+            repeat_strategy: Strategy for repeat generation
+            temperature_schedule: Temperature values for each repeat
+            sampling_params: Base sampling parameters
+            repeat_order: "item_first" (AAAA BBBB) or "batch_first" (ABCD ABCD)
+            progress_callback: Optional callback for progress updates
+        """
+        if repeat_order == "item_first":
+            return self._generate_with_repeats_item_first(
+                items, num_repeats, repeat_strategy, 
+                temperature_schedule, sampling_params, progress_callback
+            )
+        else:
+            return self._generate_with_repeats_batch_first(
+                items, num_repeats, repeat_strategy,
+                temperature_schedule, sampling_params, progress_callback
+            )
+    
+    def _generate_with_repeats_batch_first(
+        self,
+        items: List[Dict[str, Any]],
+        num_repeats: int,
+        repeat_strategy: str = "independent",
+        temperature_schedule: Optional[List[float]] = None,
+        sampling_params: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable] = None
+    ) -> List[Dict[str, Any]]:
+        """Original batch-first implementation (ABCD ABCD ABCD)"""
         all_results = []
         
         for repeat_id in range(num_repeats):
@@ -104,6 +137,114 @@ class GenerationManager:
                 result["repeat_id"] = repeat_id
             
             all_results.extend(repeat_results)
+            
+            # Progress callback
+            if progress_callback:
+                progress_callback(repeat_id + 1, num_repeats, "repeats")
+        
+        return all_results
+    
+    def _generate_with_repeats_item_first(
+        self,
+        items: List[Dict[str, Any]],
+        num_repeats: int,
+        repeat_strategy: str = "independent",
+        temperature_schedule: Optional[List[float]] = None,
+        sampling_params: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable] = None
+    ) -> List[Dict[str, Any]]:
+        """Item-first implementation (AAAA BBBB CCCC)"""
+        all_results = []
+        total_items = len(items)
+        
+        # Calculate optimal batch size for item-first processing
+        # We want to maximize GPU utilization while processing all repeats for each item
+        items_per_batch = max(1, self.config.batch_size // num_repeats)
+        
+        for batch_start in range(0, total_items, items_per_batch):
+            batch_end = min(batch_start + items_per_batch, total_items)
+            batch_items = items[batch_start:batch_end]
+            
+            logger.info(f"Processing items {batch_start}-{batch_end} of {total_items}")
+            
+            # Create prompts for all repeats of all items in this batch
+            batch_prompts = []
+            prompt_metadata = []
+            
+            for item_idx, item in enumerate(batch_items):
+                for repeat_id in range(num_repeats):
+                    # Get repeat-specific parameters
+                    repeat_params = self._get_repeat_params(
+                        repeat_id,
+                        repeat_strategy,
+                        temperature_schedule,
+                        sampling_params
+                    )
+                    
+                    # Store prompt and metadata
+                    batch_prompts.append(item["prompt"])
+                    prompt_metadata.append({
+                        "original_idx": item["idx"],
+                        "batch_item_idx": item_idx,
+                        "repeat_id": repeat_id,
+                        "item": item,
+                        "params": repeat_params
+                    })
+            
+            # Generate all prompts in one batch
+            if batch_prompts:
+                batch_results = self._generate_batch_with_varied_params(
+                    batch_prompts, prompt_metadata
+                )
+                
+                # Organize results by item
+                for result, metadata in zip(batch_results, prompt_metadata):
+                    combined_result = {
+                        **metadata["item"],
+                        **result,
+                        "repeat_id": metadata["repeat_id"],
+                        "idx": metadata["original_idx"]
+                    }
+                    all_results.append(combined_result)
+                
+                # Update metrics
+                if self.track_metrics:
+                    self._update_metrics(batch_results)
+            
+            # Progress callback
+            if progress_callback:
+                progress_callback(batch_end, total_items, "items")
+        
+        return all_results
+    
+    def _generate_batch_with_varied_params(
+        self,
+        prompts: List[str],
+        metadata: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Generate a batch where different prompts may have different parameters"""
+        # Group prompts by their parameters for efficient processing
+        param_groups = {}
+        
+        for i, (prompt, meta) in enumerate(zip(prompts, metadata)):
+            params_key = str(meta["params"])  # Convert dict to string for grouping
+            if params_key not in param_groups:
+                param_groups[params_key] = {"params": meta["params"], "indices": [], "prompts": []}
+            param_groups[params_key]["indices"].append(i)
+            param_groups[params_key]["prompts"].append(prompt)
+        
+        # Generate for each parameter group
+        all_results = [None] * len(prompts)
+        
+        for param_group in param_groups.values():
+            group_results = self._generate_with_retry(
+                param_group["prompts"],
+                param_group["params"]
+            )
+            
+            # Place results back in correct order
+            for idx, result in zip(param_group["indices"], group_results):
+                all_results[idx] = result
         
         return all_results
     

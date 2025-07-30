@@ -166,6 +166,7 @@ class GenerationConfig:
     repeat_strategy: str = "independent"  # independent, temperature_schedule, diverse
     temperature_schedule: Optional[List[float]] = None
     seed_increment: int = 1
+    repeat_order: str = "item_first"  # item_first (AAAA BBBB) or batch_first (ABCD ABCD)
     
     # Output settings
     aggregate_responses: bool = False

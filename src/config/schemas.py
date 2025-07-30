@@ -163,7 +163,7 @@ def create_config_from_args(args: Dict[str, Any]) -> Dict[str, Any]:
     # Generation config
     generation_fields = [
         "batch_size", "num_repeats", "repeat_strategy", "temperature_schedule",
-        "seed_increment", "aggregate_responses", "aggregation_method",
+        "seed_increment", "repeat_order", "aggregate_responses", "aggregation_method",
         "max_samples", "start_index", "end_index", "checkpoint_frequency",
         "resume_from_checkpoint", "error_handling", "max_retries",
         "timeout_per_request", "prefetch_batches"

@@ -65,28 +65,39 @@ class GenerationTracker:
         
         logger.info(f"Started tracking {total_items} items")
     
-    def update_progress(self, completed: int, total: Optional[int] = None):
-        """Update progress"""
-        self.completed_items = completed
-        if total:
-            self.total_items = total
+    def update_progress(self, completed: int, total: Optional[int] = None, progress_type: str = "items"):
+        """Update progress
         
-        if self.pbar:
-            self.pbar.n = completed
-            self.pbar.refresh()
-        
-        # Calculate ETA
-        if self.start_time and completed > 0:
-            elapsed = time.time() - self.start_time
-            rate = completed / elapsed
-            remaining = self.total_items - completed
-            eta = remaining / rate if rate > 0 else 0
+        Args:
+            completed: Number of completed units
+            total: Total number of units
+            progress_type: Type of progress ("items" or "repeats")
+        """
+        if progress_type == "items":
+            self.completed_items = completed
+            if total:
+                self.total_items = total
             
             if self.pbar:
-                self.pbar.set_postfix({
-                    "rate": f"{rate:.1f} items/s",
-                    "eta": f"{eta:.0f}s"
-                })
+                self.pbar.n = completed
+                self.pbar.refresh()
+            
+            # Calculate ETA for items
+            if self.start_time and completed > 0:
+                elapsed = time.time() - self.start_time
+                rate = completed / elapsed
+                remaining = self.total_items - completed
+                eta = remaining / rate if rate > 0 else 0
+                
+                if self.pbar:
+                    self.pbar.set_postfix({
+                        "rate": f"{rate:.1f} items/s",
+                        "eta": f"{eta:.0f}s"
+                    })
+        elif progress_type == "repeats":
+            # For repeat progress, just update the description
+            if self.pbar:
+                self.pbar.set_description(f"Generating (repeat {completed}/{total})")
     
     def update_metrics(self, metrics: Dict[str, Any]):
         """Update metrics"""
