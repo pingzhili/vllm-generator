@@ -63,7 +63,7 @@ class VLLMModel(BaseVLLMModel):
         # Create SamplingParams object
         params = self.sampling_params_class(**sampling_params)
 
-        logger.info(f"Sampling params: {params}")
+        logger.info(f"Sampling params 1: {params}")
         
         # Generate
         start_time = time.time()
@@ -92,7 +92,7 @@ class VLLMModel(BaseVLLMModel):
         # Create SamplingParams object
         params = self.sampling_params_class(**sampling_params)
 
-        logger.info(f"Sampling params: {params}")
+        logger.info(f"Sampling params 2: {params}")
         
         # Stream generation
         for output in self.llm.generate(prompts, params, use_tqdm=False):
