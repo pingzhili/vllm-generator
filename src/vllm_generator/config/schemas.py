@@ -149,7 +149,7 @@ def create_config_from_args(args: Dict[str, Any]) -> Dict[str, Any]:
     model_fields = [
         "model", "model_revision", "tokenizer", "dtype", "temperature",
         "top_p", "top_k", "max_tokens", "min_tokens", "repetition_penalty",
-        "length_penalty", "presence_penalty", "frequency_penalty",
+        "presence_penalty", "frequency_penalty",
         "stop_sequences", "seed", "best_of", "gpu_memory_utilization",
         "tensor_parallel_size", "max_model_len", "trust_remote_code",
         "swap_space", "cpu_offload_gb", "quantization", "enforce_eager",

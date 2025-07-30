@@ -27,7 +27,6 @@ class ModelConfig:
     max_tokens: int = 512
     min_tokens: int = 1
     repetition_penalty: float = 1.0
-    length_penalty: float = 1.0
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
     stop_sequences: Optional[List[str]] = None
@@ -109,7 +108,6 @@ class ModelConfig:
             "max_tokens": self.max_tokens,
             "min_tokens": self.min_tokens,
             "repetition_penalty": self.repetition_penalty,
-            "length_penalty": self.length_penalty,
             "presence_penalty": self.presence_penalty,
             "frequency_penalty": self.frequency_penalty,
         }

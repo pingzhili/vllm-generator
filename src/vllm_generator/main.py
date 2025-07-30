@@ -59,7 +59,6 @@ def create_parser() -> argparse.ArgumentParser:
     gen_group.add_argument("--max-tokens", type=int, default=512, help="Maximum tokens to generate")
     gen_group.add_argument("--min-tokens", type=int, default=1, help="Minimum tokens to generate")
     gen_group.add_argument("--repetition-penalty", type=float, default=1.0, help="Repetition penalty")
-    gen_group.add_argument("--length-penalty", type=float, default=1.0, help="Length penalty")
     gen_group.add_argument("--presence-penalty", type=float, default=0.0, help="Presence penalty")
     gen_group.add_argument("--frequency-penalty", type=float, default=0.0, help="Frequency penalty")
     gen_group.add_argument("--stop-sequences", type=str, help="Comma-separated stop sequences")
