@@ -6,7 +6,7 @@
 
 # Configuration
 CONFIG_FILE="configs/qwen3.yaml"
-NUM_SPLITS=4
+NUM_SPLITS=8
 BASE_PORT=8000
 
 # Function to run a split

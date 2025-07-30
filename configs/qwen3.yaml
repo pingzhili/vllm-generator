@@ -6,8 +6,8 @@
 # ... etc.
 
 data:
-  input_path: "/root/open-math-reasoning/sample_10.parquet"
-  output_path: "/root/open-math-reasoning/sample_10_results_repeat.parquet"
+  input_path: "/root/open-math-reasoning/sample_c7_300.parquet"
+  output_path: "/root/open-math-reasoning/sample_c7_300_results_repeat_16.parquet"
   input_column: "problem"
   output_column: "response"
 
@@ -15,7 +15,7 @@ model:
   url: "http://localhost:8000"  # Can be overridden with --port argument
 
 generation:
-  num_samples: 8
+  num_samples: 16
   temperature: 0.6
   top_p: 0.95
   top_k: 20
