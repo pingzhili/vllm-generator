@@ -56,7 +56,7 @@ def apply_chat_template(strings, tokenizer):
                 add_generation_prompt=True,
                 enable_thinking=True
             )
-            templated = templated + "<think>\n\n"
+            templated = templated + "<think>"
         else:
             # Fallback if no chat template
             templated = text
@@ -74,7 +74,6 @@ def extract_hidden_states(model, tokenizer, texts):
     with torch.no_grad():
         for i in tqdm(range(0, len(texts)), desc="Processing texts"):
             text = texts[i]
-            print(f"Processing text: {text}")
             inputs = tokenizer(
                 [text],
                 return_tensors="pt",
@@ -83,7 +82,6 @@ def extract_hidden_states(model, tokenizer, texts):
             # Forward pass
             outputs = model(**inputs, output_hidden_states=True)
             last_hidden_states = outputs.hidden_states[-1][0, -1]  # [batch_size, seq_len, hidden_dim]
-            print("Last hidden states shape:", last_hidden_states.shape)
             text_to_hidden_states[text] = last_hidden_states.detach().cpu()
     
     return text_to_hidden_states
