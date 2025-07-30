@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="vllm-generator",
+    name="vllm_generator",
     version="0.1.0",
     author="Your Name",
     author_email="pingzhili86@gmail.com",
@@ -48,8 +48,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "vllm-generator=vllm_generator.main:main",
-            "vllm-gen=vllm_generator.main:main",
+            "vllm_generator=vllm_generator.main:main",
+            "vllm_gen=vllm_generator.main:main",
         ],
     },
     package_data={
