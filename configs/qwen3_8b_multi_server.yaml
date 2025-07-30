@@ -39,7 +39,7 @@ generation:
 
 
 processing:
-  batch_size: 4
+  batch_size: 8
   num_workers: 16
   checkpoint_interval: 100
   checkpoint_dir: "./checkpoints/qwen_run"
