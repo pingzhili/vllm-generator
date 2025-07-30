@@ -173,7 +173,6 @@ class GenerationManager:
             for item_idx, item in enumerate(batch_items):
                 for repeat_id in range(num_repeats):
                     # Get repeat-specific parameters
-                    logger.info(f"DEBUG-1 {sampling_params}")
                     repeat_params = self._get_repeat_params(
                         repeat_id,
                         repeat_strategy,
@@ -237,7 +236,6 @@ class GenerationManager:
         all_results = [None] * len(prompts)
         
         for param_group in param_groups.values():
-            logger.info(f"DEBUG-2 {param_group['params']}")
             group_results = self._generate_with_retry(
                 param_group["prompts"],
                 param_group["params"]

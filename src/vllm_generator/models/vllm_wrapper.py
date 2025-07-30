@@ -53,7 +53,7 @@ class VLLMModel(BaseVLLMModel):
 
     def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Generate responses for a list of prompts"""
-        if sampling_params is None:
+        if sampling_params is None or len(sampling_params) == 0:
             sampling_params = self.config.to_sampling_params()
 
         # Create SamplingParams object
