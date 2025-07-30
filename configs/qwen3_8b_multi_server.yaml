@@ -5,7 +5,7 @@ model_config:
   top_p: 0.95
   max_tokens: 32768
   gpu_memory_utilization: 0.9
-  tensor_parallel_size: 2  # Each server uses 2 GPUs
+  tensor_parallel_size: 1  # Each server uses 1 GPUs
 
 generation_config:
   batch_size: 8
