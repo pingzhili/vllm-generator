@@ -1,11 +1,10 @@
 import logging
 import time
-from typing import List, Dict, Any, Optional, Iterator
+from typing import List, Dict, Any, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import numpy as np
 
-from .config import ModelConfig, GenerationConfig
-from .vllm_wrapper import VLLMModel, BaseVLLMModel
+from .config import GenerationConfig
+from .vllm_wrapper import BaseVLLMModel
 
 logger = logging.getLogger(__name__)
 
