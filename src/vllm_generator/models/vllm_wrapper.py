@@ -1,264 +1,194 @@
-import logging
-import time
-from typing import Optional, List, Dict, Any, Iterator
-from abc import ABC, abstractmethod
-from vllm_generator.models import ModelConfig
+"""vLLM client wrapper for API interactions."""
 
-logger = logging.getLogger(__name__)
+import asyncio
+from typing import List, Dict, Any, Optional, Union
+import httpx
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
 
-
-class BaseVLLMModel(ABC):
-    """Base class for vLLM model implementations"""
-
-    @abstractmethod
-    def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Generate responses for a list of prompts"""
-        pass
-
-    @abstractmethod
-    def get_tokenizer(self):
-        """Get the tokenizer from the model"""
-        pass
-
-    @abstractmethod
-    def shutdown(self):
-        """Shutdown the model"""
-        pass
+from ..config.schemas import ModelConfig, GenerationConfig, RetryConfig
+from ..utils import get_logger
 
 
-class VLLMModel(BaseVLLMModel):
-    """Wrapper for vLLM model (real implementation)"""
-
-    def __init__(self, config: ModelConfig):
-        self.config = config
-        self.llm = None
-        self.sampling_params_class = None
-
+class VLLMClient:
+    """Async client for vLLM server interactions."""
+    
+    def __init__(
+        self,
+        model_config: ModelConfig,
+        generation_config: GenerationConfig,
+        retry_config: RetryConfig
+    ):
+        """Initialize vLLM client."""
+        self.model_config = model_config
+        self.generation_config = generation_config
+        self.retry_config = retry_config
+        self.logger = get_logger(f"VLLMClient[{model_config.name or model_config.url}]")
+        
+        # Setup HTTP client
+        self.client = httpx.AsyncClient(
+            base_url=str(model_config.url),
+            timeout=retry_config.timeout,
+            headers=model_config.headers or {}
+        )
+        
+        # API endpoints
+        self.completions_endpoint = "/v1/completions"
+        self.chat_endpoint = "/v1/chat/completions"
+        self.health_endpoint = "/health"
+        self.models_endpoint = "/v1/models"
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()
+    
+    async def close(self):
+        """Close HTTP client."""
+        await self.client.aclose()
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError)),
+        before_sleep=before_sleep_log(get_logger("VLLMClient"), "WARNING")
+    )
+    async def health_check(self) -> bool:
+        """Check if vLLM server is healthy."""
         try:
-            # Try to import vLLM
-            from vllm import LLM, SamplingParams
-            self.sampling_params_class = SamplingParams
-
-            # Initialize vLLM
-            logger.info(f"Initializing vLLM with model: {config.model}")
-            self.llm = LLM(**config.to_vllm_args())
-            logger.info("vLLM initialized successfully")
-
-        except ImportError:
-            logger.warning("vLLM not available, using mock model for testing")
-            # Fall back to mock model
-            self.__class__ = MockVLLMModel
-            MockVLLMModel.__init__(self, config)
-        logger.info(f"Initializing vLLM with model config: {config}")
-
-    def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Generate responses for a list of prompts"""
-        if sampling_params is None or len(sampling_params) == 0:
-            sampling_params = self.config.to_sampling_params()
-
-        # Create SamplingParams object
-        params = self.sampling_params_class(**sampling_params)
-
-        # Generate
-        start_time = time.time()
-        outputs = self.llm.generate(prompts, params)
-        latency = time.time() - start_time
-
-        # Process outputs
-        results = []
-        for i, output in enumerate(outputs):
-            result = {
-                "prompt": prompts[i],
-                "response": output.outputs[0].text,
-                "tokens": len(output.outputs[0].token_ids),
-                "latency": latency / len(outputs),  # Average latency
-                "finish_reason": output.outputs[0].finish_reason
-            }
-            results.append(result)
-
-        return results
-
-    def get_tokenizer(self):
-        """Get the tokenizer from the model"""
-        if self.llm and hasattr(self.llm, 'get_tokenizer'):
-            return self.llm.get_tokenizer()
-        elif self.llm and hasattr(self.llm, 'tokenizer'):
-            return self.llm.tokenizer
+            response = await self.client.get(self.health_endpoint)
+            return response.status_code == 200
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}")
+            return False
+    
+    async def list_models(self) -> List[str]:
+        """List available models on the server."""
+        try:
+            response = await self.client.get(self.models_endpoint)
+            response.raise_for_status()
+            data = response.json()
+            return [model["id"] for model in data.get("data", [])]
+        except Exception as e:
+            self.logger.error(f"Failed to list models: {e}")
+            return []
+    
+    def _prepare_request(
+        self,
+        prompt: str,
+        temperature: Optional[float] = None,
+        sample_idx: int = 0
+    ) -> Dict[str, Any]:
+        """Prepare request payload for vLLM."""
+        # Handle temperature scheduling
+        if isinstance(self.generation_config.temperature, list):
+            temp = self.generation_config.temperature[sample_idx % len(self.generation_config.temperature)]
         else:
-            logger.warning("Tokenizer not available from vLLM model")
-            return None
-
-    def shutdown(self):
-        """Shutdown the model"""
-        if self.llm:
-            logger.info("Shutting down vLLM")
-            # vLLM doesn't have explicit shutdown, but we can help with cleanup
-            del self.llm
-            self.llm = None
-
-
-class MockVLLMModel(BaseVLLMModel):
-    """Mock vLLM model for testing on systems without GPU"""
-
-    def __init__(self, config: ModelConfig):
-        self.config = config
-        logger.info(f"Initializing mock vLLM model for: {config.model}")
-
-        # Simulate model loading time
-        time.sleep(0.5)
-
-        self.response_templates = [
-            "This is a mock response generated for testing purposes.",
-            "Mock model output: The answer to your question would typically appear here.",
-            "Test response: In a real scenario, the LLM would generate meaningful content.",
-            "Sample output: This demonstrates the system functionality without actual generation.",
-            "Mock generation: Real responses would be more contextually relevant."
-        ]
-
-    def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Generate mock responses"""
-        if sampling_params is None:
-            sampling_params = self.config.to_sampling_params()
-
-        results = []
-        for i, prompt in enumerate(prompts):
-            # Simulate generation time
-            time.sleep(0.1)
-
-            # Generate mock response
-            response_idx = i % len(self.response_templates)
-            response = self.response_templates[response_idx]
-
-            # Add some variation based on temperature
-            temp = sampling_params.get("temperature", 1.0)
-            if temp > 1.0:
-                response += f" (Temperature: {temp}, more creative output would appear here)"
-
-            # Simulate token count
-            tokens = len(response.split()) * 2  # Rough approximation
-
-            result = {
-                "prompt": prompt,
-                "response": response,
-                "tokens": tokens,
-                "latency": 0.1,
-                "finish_reason": "stop"
-            }
-            results.append(result)
-
-        return results
-
-    def get_tokenizer(self):
-        """Get a mock tokenizer for testing"""
-
-        # Return a mock tokenizer that has apply_chat_template method
-        class MockTokenizer:
-            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
-                # Simple mock implementation
-                formatted = []
-                for msg in messages:
-                    formatted.append(f"{msg['role']}: {msg['content']}")
-                result = "\n".join(formatted)
-                if add_generation_prompt:
-                    result += "\nAssistant:"
-                return result
-
-        return MockTokenizer()
-
-    def shutdown(self):
-        """Shutdown mock model"""
-        logger.info("Shutting down mock vLLM model")
-
-
-class VLLMServer:
-    """Wrapper for vLLM server mode (for multi-server parallelism)"""
-
-    def __init__(self, config: ModelConfig, port: int = 8000):
-        self.config = config
-        self.port = port
-        self.process = None
-        self.base_url = f"http://localhost:{port}"
-
-    def start(self):
-        """Start vLLM server"""
-        import subprocess
-
-        cmd = [
-            "python", "-m", "vllm.entrypoints.openai.api_server",
-            "--model", self.config.model,
-            "--port", str(self.port),
-            "--gpu-memory-utilization", str(self.config.gpu_memory_utilization),
-            "--tensor-parallel-size", str(self.config.tensor_parallel_size),
-        ]
-
-        if self.config.dtype != "auto":
-            cmd.extend(["--dtype", self.config.dtype])
-
-        logger.info(f"Starting vLLM server on port {self.port}")
-        self.process = subprocess.Popen(cmd)
-
-        # Wait for server to be ready
-        self._wait_for_server()
-
-    def _wait_for_server(self, timeout: int = 60):
-        """Wait for server to be ready"""
-        import requests
-
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                # Try /ping endpoint first (POST method based on logs)
-                response = requests.post(f"{self.base_url}/ping")
-                if response.status_code == 200:
-                    logger.info(f"vLLM server ready on port {self.port}")
-                    return
-            except:
-                try:
-                    # Fallback to /v1/models endpoint (GET method)
-                    response = requests.get(f"{self.base_url}/v1/models")
-                    if response.status_code == 200:
-                        logger.info(f"vLLM server ready on port {self.port}")
-                        return
-                except:
-                    pass
-            time.sleep(1)
-
-        raise TimeoutError(f"vLLM server failed to start on port {self.port}")
-
-    def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Generate via API"""
-        import requests
-
-        if sampling_params is None:
-            sampling_params = self.config.to_sampling_params()
-
-        results = []
-        for prompt in prompts:
-            response = requests.post(
-                f"{self.base_url}/v1/completions",
-                json={
-                    "prompt": prompt,
-                    **sampling_params
-                }
+            temp = temperature or self.generation_config.temperature
+        
+        request = {
+            "prompt": prompt,
+            "max_tokens": self.generation_config.max_tokens,
+            "temperature": temp,
+            "top_p": self.generation_config.top_p,
+            "top_k": self.generation_config.top_k,
+            "presence_penalty": self.generation_config.presence_penalty,
+            "frequency_penalty": self.generation_config.frequency_penalty,
+            "n": 1,  # Always generate 1 at a time for better control
+        }
+        
+        if self.generation_config.stop_sequences:
+            request["stop"] = self.generation_config.stop_sequences
+        
+        if self.generation_config.seed is not None:
+            request["seed"] = self.generation_config.seed
+        
+        return request
+    
+    @retry(
+        stop=lambda r: r.attempt_number > r.retry_object.retry_config.max_retries,
+        wait=lambda r: wait_exponential(
+            multiplier=r.retry_object.retry_config.retry_delay,
+            max=r.retry_object.retry_config.retry_delay * r.retry_object.retry_config.backoff_factor ** 3
+        )(r),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.HTTPStatusError)),
+        before_sleep=before_sleep_log(get_logger("VLLMClient"), "WARNING")
+    )
+    async def generate(
+        self,
+        prompt: str,
+        temperature: Optional[float] = None,
+        sample_idx: int = 0
+    ) -> Dict[str, Any]:
+        """Generate completion for a single prompt."""
+        request = self._prepare_request(prompt, temperature, sample_idx)
+        
+        try:
+            response = await self.client.post(
+                self.completions_endpoint,
+                json=request
             )
             response.raise_for_status()
-
-            data = response.json()
-            result = {
-                "prompt": prompt,
-                "response": data["choices"][0]["text"],
-                "tokens": data["usage"]["completion_tokens"],
-                "latency": data.get("latency", 0),
-                "finish_reason": data["choices"][0]["finish_reason"]
-            }
-            results.append(result)
-
-        return results
-
-    def shutdown(self):
-        """Shutdown server"""
-        if self.process:
-            logger.info(f"Shutting down vLLM server on port {self.port}")
-            self.process.terminate()
-            self.process.wait()
-            self.process = None
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            self.logger.error(f"HTTP error {e.response.status_code}: {e.response.text}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Generation failed: {e}")
+            raise
+    
+    async def generate_batch(
+        self,
+        prompts: List[str],
+        temperature: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate completions for multiple prompts concurrently."""
+        tasks = [
+            self.generate(prompt, temperature, idx)
+            for idx, prompt in enumerate(prompts)
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results and handle exceptions
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                self.logger.error(f"Failed to generate for prompt {i}: {result}")
+                processed_results.append({"error": str(result)})
+            else:
+                processed_results.append(result)
+        
+        return processed_results
+    
+    async def generate_samples(
+        self,
+        prompt: str,
+        num_samples: int
+    ) -> List[Dict[str, Any]]:
+        """Generate multiple samples for a single prompt."""
+        tasks = [
+            self.generate(prompt, sample_idx=i)
+            for i in range(num_samples)
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                self.logger.error(f"Failed to generate sample {i}: {result}")
+                processed_results.append({"error": str(result)})
+            else:
+                processed_results.append(result)
+        
+        return processed_results

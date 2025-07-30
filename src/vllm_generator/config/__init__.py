@@ -1,4 +1,23 @@
-from .parser import ConfigParser
-from .schemas import ConfigSchema, validate_config
+"""Configuration module for vLLM generator."""
 
-__all__ = ["ConfigParser", "ConfigSchema", "validate_config"]
+from .schemas import (
+    Config,
+    DataConfig,
+    ModelConfig,
+    GenerationConfig,
+    ProcessingConfig,
+    RetryConfig,
+    LoggingConfig,
+)
+from .parser import ConfigParser
+
+__all__ = [
+    "Config",
+    "DataConfig",
+    "ModelConfig",
+    "GenerationConfig",
+    "ProcessingConfig",
+    "RetryConfig",
+    "LoggingConfig",
+    "ConfigParser",
+]

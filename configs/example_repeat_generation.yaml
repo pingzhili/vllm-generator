@@ -1,31 +1,39 @@
-# Configuration for repeat generation with temperature scheduling
-model_config:
-  model: "Qwen/Qwen3-8B"
-  temperature: 0.6
+# Configuration for repeated sampling with temperature variation
+
+data:
+  input_path: "data/questions.parquet"
+  output_path: "data/responses_multi_sample.parquet"
+  input_column: "question"
+  output_column: "response"
+  # Copy additional columns to output
+  copy_columns: ["id", "category"]
+
+models:
+  - url: "http://localhost:8000"
+    name: "primary_model"
+
+generation:
+  # Generate 5 samples per input
+  num_samples: 5
+  # Use different temperature for each sample
+  temperature: [0.5, 0.7, 0.9, 1.0, 1.2]
   top_p: 0.95
-  max_tokens: 32768
-  gpu_memory_utilization: 0.9
+  max_tokens: 1024
+  stop_sequences: ["###", "END"]
+  seed: 42
 
-generation_config:
-  batch_size: 16
-  num_repeats: 5
-  repeat_strategy: "temperature_schedule"
-  temperature_schedule: [0.5, 0.7, 0.9, 1.1, 1.3]
-  seed_increment: 1
-  aggregate_responses: true
-  aggregation_method: "longest"
-  checkpoint_frequency: 50
+processing:
+  batch_size: 16  # Smaller batch size for multiple samples
+  num_workers: 1
+  checkpoint_interval: 50
 
-data_config:
-  question_column: "prompt"
-  output_format: "nested"
-  output_column_prefix: "generation"
-  prompt_template: "Question: {question}\n\nAnswer:"
-  
-parallel_config:
-  mode: "single"
-  
-logging_config:
+retry:
+  max_retries: 5
+  retry_delay: 2.0
+  timeout: 600
+
+logging:
   level: "INFO"
-  save_metadata: true
-  track_token_usage: true
+  file: "logs/repeat_generation.log"
+  rotation: "100 MB"
+  retention: "7 days"

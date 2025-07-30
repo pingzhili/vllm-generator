@@ -1,141 +1,133 @@
-import json
+"""Configuration parser for YAML files and CLI arguments."""
+
 import yaml
 from pathlib import Path
-from typing import Dict, Any
-import os
-
-from ..utils.helpers import merge_configs
+from typing import Dict, Any, Optional
+from .schemas import Config
 
 
 class ConfigParser:
-    """Parse configuration from files and environment variables"""
+    """Parse and validate configuration from YAML files and CLI arguments."""
     
     @staticmethod
-    def load_config(config_path: str) -> Dict[str, Any]:
-        """Load configuration from file"""
-        path = Path(config_path)
+    def from_yaml(config_path: Path) -> Config:
+        """Load configuration from YAML file."""
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
         
-        if not path.exists():
-            raise FileNotFoundError(f"Config file not found: {config_path}")
+        with open(config_path, "r") as f:
+            data = yaml.safe_load(f)
         
-        # Determine file type
-        if path.suffix in ['.yaml', '.yml']:
-            return ConfigParser._load_yaml(path)
-        elif path.suffix == '.json':
-            return ConfigParser._load_json(path)
-        else:
-            raise ValueError(f"Unsupported config file type: {path.suffix}")
+        return Config(**data)
     
     @staticmethod
-    def _load_yaml(path: Path) -> Dict[str, Any]:
-        """Load YAML configuration"""
-        with open(path, 'r') as f:
-            return yaml.safe_load(f)
+    def from_dict(data: Dict[str, Any]) -> Config:
+        """Create configuration from dictionary."""
+        return Config(**data)
     
     @staticmethod
-    def _load_json(path: Path) -> Dict[str, Any]:
-        """Load JSON configuration"""
-        with open(path, 'r') as f:
-            return json.load(f)
+    def merge_cli_args(config: Config, args: Dict[str, Any]) -> Config:
+        """Merge CLI arguments into existing configuration."""
+        # Create a copy of the configuration data
+        config_data = config.model_dump()
+        
+        # Map CLI arguments to configuration structure
+        if args.get("input"):
+            config_data["data"]["input_path"] = args["input"]
+        if args.get("output"):
+            config_data["data"]["output_path"] = args["output"]
+        if args.get("input_column"):
+            config_data["data"]["input_column"] = args["input_column"]
+        if args.get("output_column"):
+            config_data["data"]["output_column"] = args["output_column"]
+        
+        # Model configuration
+        if args.get("model_url"):
+            config_data["models"] = [{"url": args["model_url"]}]
+        elif args.get("model_urls"):
+            config_data["models"] = [{"url": url} for url in args["model_urls"]]
+        
+        # Generation parameters
+        if args.get("num_samples") is not None:
+            config_data["generation"]["num_samples"] = args["num_samples"]
+        if args.get("temperature") is not None:
+            config_data["generation"]["temperature"] = args["temperature"]
+        if args.get("top_p") is not None:
+            config_data["generation"]["top_p"] = args["top_p"]
+        if args.get("top_k") is not None:
+            config_data["generation"]["top_k"] = args["top_k"]
+        if args.get("max_tokens") is not None:
+            config_data["generation"]["max_tokens"] = args["max_tokens"]
+        if args.get("stop_sequences"):
+            config_data["generation"]["stop_sequences"] = args["stop_sequences"]
+        if args.get("seed") is not None:
+            config_data["generation"]["seed"] = args["seed"]
+        
+        # Processing parameters
+        if args.get("batch_size") is not None:
+            config_data["processing"]["batch_size"] = args["batch_size"]
+        if args.get("num_workers") is not None:
+            config_data["processing"]["num_workers"] = args["num_workers"]
+        if args.get("checkpoint_dir"):
+            config_data["processing"]["checkpoint_dir"] = args["checkpoint_dir"]
+        if args.get("resume"):
+            config_data["processing"]["resume"] = args["resume"]
+        
+        # Retry parameters
+        if args.get("timeout") is not None:
+            config_data["retry"]["timeout"] = args["timeout"]
+        if args.get("max_retries") is not None:
+            config_data["retry"]["max_retries"] = args["max_retries"]
+        if args.get("retry_delay") is not None:
+            config_data["retry"]["retry_delay"] = args["retry_delay"]
+        
+        return Config(**config_data)
     
     @staticmethod
-    def load_from_env() -> Dict[str, Any]:
-        """Load configuration from environment variables
+    def to_yaml(config: Config, output_path: Path) -> None:
+        """Save configuration to YAML file."""
+        config_dict = config.model_dump(mode="json")
         
-        Environment variables should be prefixed with VLLM_GEN_
-        """
-        config = {}
-        prefix = "VLLM_GEN_"
+        # Convert Path objects to strings
+        def convert_paths(obj):
+            if isinstance(obj, dict):
+                return {k: convert_paths(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_paths(v) for v in obj]
+            elif isinstance(obj, Path):
+                return str(obj)
+            return obj
         
-        for key, value in os.environ.items():
-            if key.startswith(prefix):
-                # Remove prefix and convert to lowercase
-                config_key = key[len(prefix):].lower()
-                
-                # Convert underscores to dots for nested keys
-                # e.g., VLLM_GEN_MODEL_CONFIG_TEMPERATURE -> model_config.temperature
-                if '_' in config_key:
-                    parts = config_key.split('_')
-                    
-                    # Build nested dict
-                    current = config
-                    for part in parts[:-1]:
-                        if part not in current:
-                            current[part] = {}
-                        current = current[part]
-                    
-                    # Set value
-                    current[parts[-1]] = ConfigParser._parse_env_value(value)
-                else:
-                    config[config_key] = ConfigParser._parse_env_value(value)
+        config_dict = convert_paths(config_dict)
         
-        return config
+        with open(output_path, "w") as f:
+            yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
     
     @staticmethod
-    def _parse_env_value(value: str) -> Any:
-        """Parse environment variable value"""
-        # Try to parse as JSON first
-        try:
-            return json.loads(value)
-        except:
-            # Fall back to string
-            return value
-    
-    @staticmethod
-    def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge multiple configurations
-        
-        Later configs override earlier ones
-        """
-        result = {}
-        
-        for config in configs:
-            if config:
-                result = merge_configs(result, config)
-        
-        return result
-    
-    @staticmethod
-    def save_config(config: Dict[str, Any], output_path: str):
-        """Save configuration to file"""
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        
-        if path.suffix in ['.yaml', '.yml']:
-            with open(path, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False)
-        else:
-            with open(path, 'w') as f:
-                json.dump(config, f, indent=2)
-    
-    @staticmethod
-    def create_example_config() -> Dict[str, Any]:
-        """Create an example configuration"""
-        return {
-            "model_config": {
-                "model": "meta-llama/Llama-2-7b-hf",
-                "dtype": "float16",
-                "temperature": 0.7,
-                "max_tokens": 512,
-                "gpu_memory_utilization": 0.9
+    def create_default_config(
+        input_path: str,
+        output_path: str,
+        model_url: str,
+        **kwargs
+    ) -> Config:
+        """Create a default configuration with minimal required parameters."""
+        config_data = {
+            "data": {
+                "input_path": input_path,
+                "output_path": output_path,
+                "input_column": kwargs.get("input_column", "question"),
+                "output_column": kwargs.get("output_column", "response"),
             },
-            "generation_config": {
-                "batch_size": 32,
-                "num_repeats": 1,
-                "error_handling": "skip",
-                "checkpoint_frequency": 100
+            "models": [{"url": model_url}],
+            "generation": {
+                "num_samples": kwargs.get("num_samples", 1),
+                "temperature": kwargs.get("temperature", 1.0),
+                "max_tokens": kwargs.get("max_tokens", 512),
             },
-            "data_config": {
-                "question_column": "question",
-                "output_format": "wide",
-                "output_column_prefix": "response"
-            },
-            "parallel_config": {
-                "mode": "single",
-                "num_workers": 1
-            },
-            "logging_config": {
-                "level": "INFO",
-                "progress_bar": True
+            "processing": {
+                "batch_size": kwargs.get("batch_size", 32),
+                "num_workers": kwargs.get("num_workers", 1),
             }
         }
+        
+        return Config(**config_data)

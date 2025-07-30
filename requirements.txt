@@ -1,18 +1,12 @@
-# Core dependencies
 pandas
 pyarrow
-numpy
+pydantic
 pyyaml
+httpx
+loguru
+rich
+click
+tenacity
 tqdm
-vllm
-
-# Optional: Ray for distributed processing
-# ray>=2.0.0
-
-# Development dependencies
-pytest
-pytest-cov
-black
-isort
-flake8
-mypy
+aiofiles
+asyncio

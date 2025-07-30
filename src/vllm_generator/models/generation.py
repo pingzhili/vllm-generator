@@ -1,401 +1,220 @@
-import logging
+"""Generation manager for handling text generation with vLLM."""
+
+import asyncio
+from typing import List, Dict, Any, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
 import time
-from typing import List, Dict, Any, Optional, Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .config import GenerationConfig
-from .vllm_wrapper import BaseVLLMModel
-
-logger = logging.getLogger(__name__)
+from .vllm_wrapper import VLLMClient
+from .config import ModelManager, ModelEndpoint
+from ..config.schemas import Config, ModelConfig
+from ..data.processor import DataProcessor
+from ..utils import get_logger, distribute_items
 
 
 class GenerationManager:
-    """Manages the generation process with batching and error handling"""
+    """Manage text generation across multiple vLLM endpoints."""
     
-    def __init__(
-        self,
-        model: BaseVLLMModel,
-        generation_config: GenerationConfig,
-        track_metrics: bool = True
-    ):
-        self.model = model
-        self.config = generation_config
-        self.track_metrics = track_metrics
-        self.metrics = {
-            "total_prompts": 0,
-            "successful_generations": 0,
-            "failed_generations": 0,
-            "total_tokens": 0,
-            "total_time": 0,
-            "retries": 0
-        }
+    def __init__(self, config: Config):
+        """Initialize generation manager."""
+        self.config = config
+        self.logger = get_logger("GenerationManager")
+        self.model_manager = ModelManager(config.models)
+        self.data_processor = DataProcessor()
+        
+        # Create clients for each endpoint
+        self.clients: Dict[str, VLLMClient] = {}
+        for model_config in config.models:
+            client = VLLMClient(
+                model_config=model_config,
+                generation_config=config.generation,
+                retry_config=config.retry
+            )
+            self.clients[str(model_config.url)] = client
     
-    def generate_batch(
-        self,
-        items: List[Dict[str, Any]],
-        sampling_params: Optional[Dict[str, Any]] = None,
-        progress_callback: Optional[callable] = None
-    ) -> List[Dict[str, Any]]:
-        """Generate responses for a batch of items"""
-        results = []
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()
+    
+    async def close(self):
+        """Close all clients."""
+        for client in self.clients.values():
+            await client.close()
+    
+    async def health_check_all(self) -> Dict[str, bool]:
+        """Check health of all endpoints."""
+        results = {}
         
-        # Process in smaller batches if needed
-        batch_size = self.config.batch_size
-        num_batches = (len(items) + batch_size - 1) // batch_size
-        
-        for batch_idx in range(num_batches):
-            start_idx = batch_idx * batch_size
-            end_idx = min(start_idx + batch_size, len(items))
-            batch_items = items[start_idx:end_idx]
+        for endpoint in self.model_manager.endpoints:
+            client = self.clients[endpoint.url]
+            is_healthy = await client.health_check()
             
-            # Extract prompts
-            prompts = [item["prompt"] for item in batch_items]
+            if is_healthy:
+                self.model_manager.mark_healthy(endpoint)
+            else:
+                self.model_manager.mark_unhealthy(endpoint)
             
-            # Generate with error handling
-            batch_results = self._generate_with_retry(prompts, sampling_params)
-            
-            # Combine with original items
-            for i, (item, result) in enumerate(zip(batch_items, batch_results)):
-                combined = {
-                    **item,
-                    **result,
-                    "batch_idx": batch_idx
-                }
-                results.append(combined)
-            
-            # Update metrics
-            if self.track_metrics:
-                self._update_metrics(batch_results)
-            
-            # Progress callback
-            if progress_callback:
-                progress_callback(end_idx, len(items))
+            results[endpoint.name] = is_healthy
         
         return results
     
-    def generate_with_repeats(
+    async def generate_single(
         self,
-        items: List[Dict[str, Any]],
-        num_repeats: int,
-        repeat_strategy: str = "independent",
-        temperature_schedule: Optional[List[float]] = None,
-        sampling_params: Optional[Dict[str, Any]] = None,
-        repeat_order: str = "item_first",
-        progress_callback: Optional[Callable] = None
-    ) -> List[Dict[str, Any]]:
-        """Generate multiple responses per item
-        
-        Args:
-            items: List of items to generate for
-            num_repeats: Number of times to generate per item
-            repeat_strategy: Strategy for repeat generation
-            temperature_schedule: Temperature values for each repeat
-            sampling_params: Base sampling parameters
-            repeat_order: "item_first" (AAAA BBBB) or "batch_first" (ABCD ABCD)
-            progress_callback: Optional callback for progress updates
-        """
-        if repeat_order == "item_first":
-            return self._generate_with_repeats_item_first(
-                items, num_repeats, repeat_strategy, 
-                temperature_schedule, sampling_params, progress_callback
-            )
-        else:
-            return self._generate_with_repeats_batch_first(
-                items, num_repeats, repeat_strategy,
-                temperature_schedule, sampling_params, progress_callback
-            )
-    
-    def _generate_with_repeats_batch_first(
-        self,
-        items: List[Dict[str, Any]],
-        num_repeats: int,
-        repeat_strategy: str = "independent",
-        temperature_schedule: Optional[List[float]] = None,
-        sampling_params: Optional[Dict[str, Any]] = None,
-        progress_callback: Optional[Callable] = None
-    ) -> List[Dict[str, Any]]:
-        """Original batch-first implementation (ABCD ABCD ABCD)"""
-        all_results = []
-        
-        for repeat_id in range(num_repeats):
-            logger.info(f"Generating repeat {repeat_id + 1}/{num_repeats}")
-            
-            # Adjust sampling params for this repeat
-            repeat_params = self._get_repeat_params(
-                repeat_id,
-                repeat_strategy,
-                temperature_schedule,
-                sampling_params
-            )
-            
-            # Generate
-            repeat_results = self.generate_batch(items, repeat_params)
-            
-            # Add repeat information
-            for result in repeat_results:
-                result["repeat_id"] = repeat_id
-            
-            all_results.extend(repeat_results)
-            
-            # Progress callback
-            if progress_callback:
-                progress_callback(repeat_id + 1, num_repeats, "repeats")
-        
-        return all_results
-    
-    def _generate_with_repeats_item_first(
-        self,
-        items: List[Dict[str, Any]],
-        num_repeats: int,
-        repeat_strategy: str = "independent",
-        temperature_schedule: Optional[List[float]] = None,
-        sampling_params: Optional[Dict[str, Any]] = None,
-        progress_callback: Optional[Callable] = None
-    ) -> List[Dict[str, Any]]:
-        """Item-first implementation (AAAA BBBB CCCC)"""
-        all_results = []
-        total_items = len(items)
-        
-        # Calculate optimal batch size for item-first processing
-        # We want to maximize GPU utilization while processing all repeats for each item
-        items_per_batch = max(1, self.config.batch_size // num_repeats)
-        
-        for batch_start in range(0, total_items, items_per_batch):
-            batch_end = min(batch_start + items_per_batch, total_items)
-            batch_items = items[batch_start:batch_end]
-            
-            logger.info(f"Processing items {batch_start}-{batch_end} of {total_items}")
-            
-            # Create prompts for all repeats of all items in this batch
-            batch_prompts = []
-            prompt_metadata = []
-            
-            for item_idx, item in enumerate(batch_items):
-                for repeat_id in range(num_repeats):
-                    # Get repeat-specific parameters
-                    repeat_params = self._get_repeat_params(
-                        repeat_id,
-                        repeat_strategy,
-                        temperature_schedule,
-                        sampling_params
-                    )
-                    
-                    # Store prompt and metadata
-                    batch_prompts.append(item["prompt"])
-                    prompt_metadata.append({
-                        "original_idx": item["idx"],
-                        "batch_item_idx": item_idx,
-                        "repeat_id": repeat_id,
-                        "item": item,
-                        "params": repeat_params
-                    })
-            
-            # Generate all prompts in one batch
-            if batch_prompts:
-                batch_results = self._generate_batch_with_varied_params(
-                    batch_prompts, prompt_metadata
-                )
-                
-                # Organize results by item
-                for result, metadata in zip(batch_results, prompt_metadata):
-                    combined_result = {
-                        **metadata["item"],
-                        **result,
-                        "repeat_id": metadata["repeat_id"],
-                        "idx": metadata["original_idx"]
-                    }
-                    all_results.append(combined_result)
-                
-                # Update metrics
-                if self.track_metrics:
-                    self._update_metrics(batch_results)
-            
-            # Progress callback
-            if progress_callback:
-                progress_callback(batch_end, total_items, "items")
-        
-        return all_results
-    
-    def _generate_batch_with_varied_params(
-        self,
-        prompts: List[str],
-        metadata: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Generate a batch where different prompts may have different parameters"""
-        # Group prompts by their parameters for efficient processing
-        param_groups = {}
-        
-        for i, (prompt, meta) in enumerate(zip(prompts, metadata)):
-            params_key = str(meta["params"])  # Convert dict to string for grouping
-            if params_key not in param_groups:
-                param_groups[params_key] = {"params": meta["params"], "indices": [], "prompts": []}
-            param_groups[params_key]["indices"].append(i)
-            param_groups[params_key]["prompts"].append(prompt)
-        
-        # Generate for each parameter group
-        all_results = [None] * len(prompts)
-        
-        for param_group in param_groups.values():
-            group_results = self._generate_with_retry(
-                param_group["prompts"],
-                param_group["params"]
-            )
-            
-            # Place results back in correct order
-            for idx, result in zip(param_group["indices"], group_results):
-                all_results[idx] = result
-        
-        return all_results
-    
-    def generate_parallel_batches(
-        self,
-        item_batches: List[List[Dict[str, Any]]],
-        num_workers: int = 4,
-        sampling_params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Generate multiple batches in parallel using threads"""
-        all_results = []
-        
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            # Submit all batches
-            future_to_batch = {}
-            for batch_idx, batch_items in enumerate(item_batches):
-                future = executor.submit(
-                    self.generate_batch,
-                    batch_items,
-                    sampling_params
-                )
-                future_to_batch[future] = batch_idx
-            
-            # Collect results
-            for future in as_completed(future_to_batch):
-                batch_idx = future_to_batch[future]
-                try:
-                    results = future.result()
-                    all_results.extend(results)
-                except Exception as e:
-                    logger.error(f"Batch {batch_idx} failed: {e}")
-                    if self.config.error_handling == "fail":
-                        raise
-        
-        return all_results
-    
-    def _generate_with_retry(
-        self,
-        prompts: List[str],
-        sampling_params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Generate with retry logic"""
-        last_error = None
-        
-        for attempt in range(self.config.max_retries):
-            try:
-                start_time = time.time()
-                
-                # Set timeout if specified
-                if self.config.timeout_per_request:
-                    # Would need to implement timeout logic here
-                    # For now, just call generate
-                    results = self.model.generate(prompts, sampling_params)
-                else:
-                    results = self.model.generate(prompts, sampling_params)
-                
-                # Success
-                generation_time = time.time() - start_time
-                for result in results:
-                    result["generation_time"] = generation_time / len(results)
-                
-                return results
-                
-            except Exception as e:
-                last_error = e
-                logger.warning(f"Generation attempt {attempt + 1} failed: {e}")
-                
-                if self.track_metrics:
-                    self.metrics["retries"] += 1
-                
-                if attempt < self.config.max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-        
-        # All retries failed
-        if self.config.error_handling == "fail":
-            raise last_error
-        elif self.config.error_handling == "skip":
-            # Return empty results
-            logger.error(f"Skipping {len(prompts)} prompts due to generation failure")
-            return [
-                {
-                    "prompt": prompt,
-                    "response": "",
-                    "error": str(last_error),
-                    "tokens": 0,
-                    "latency": 0
-                }
-                for prompt in prompts
-            ]
-        else:
-            raise ValueError(f"Unknown error handling: {self.config.error_handling}")
-    
-    def _get_repeat_params(
-        self,
-        repeat_id: int,
-        repeat_strategy: str,
-        temperature_schedule: Optional[List[float]],
-        base_params: Optional[Dict[str, Any]]
+        prompt: str,
+        endpoint: Optional[ModelEndpoint] = None
     ) -> Dict[str, Any]:
-        """Get sampling parameters for a specific repeat"""
-        params = (base_params or {}).copy()
+        """Generate response for a single prompt."""
+        if endpoint is None:
+            endpoint = self.model_manager.get_endpoint()
         
-        if repeat_strategy == "temperature_schedule" and temperature_schedule:
-            params["temperature"] = temperature_schedule[repeat_id]
+        client = self.clients[endpoint.url]
         
-        # Increment seed if using fixed seed
-        if "seed" in params and params["seed"] is not None:
-            params["seed"] = params["seed"] + repeat_id * self.config.seed_increment
-        
-        return params
-    
-    def _update_metrics(self, results: List[Dict[str, Any]]):
-        """Update generation metrics"""
-        self.metrics["total_prompts"] += len(results)
-        
-        for result in results:
-            if result.get("error"):
-                self.metrics["failed_generations"] += 1
+        try:
+            if self.config.generation.num_samples > 1:
+                # Generate multiple samples
+                results = await client.generate_samples(
+                    prompt,
+                    self.config.generation.num_samples
+                )
+                # Combine results
+                combined = {
+                    "choices": [],
+                    "model": endpoint.name
+                }
+                for result in results:
+                    if "choices" in result:
+                        combined["choices"].extend(result["choices"])
+                return combined
             else:
-                self.metrics["successful_generations"] += 1
-                self.metrics["total_tokens"] += result.get("tokens", 0)
-                self.metrics["total_time"] += result.get("latency", 0)
-    
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get generation metrics"""
-        metrics = self.metrics.copy()
+                # Generate single sample
+                return await client.generate(prompt)
         
-        # Calculate averages
-        if metrics["successful_generations"] > 0:
-            metrics["avg_tokens_per_generation"] = (
-                metrics["total_tokens"] / metrics["successful_generations"]
-            )
-            metrics["avg_time_per_generation"] = (
-                metrics["total_time"] / metrics["successful_generations"]
-            )
-            metrics["tokens_per_second"] = (
-                metrics["total_tokens"] / metrics["total_time"]
-                if metrics["total_time"] > 0 else 0
-            )
-        
-        return metrics
+        except Exception as e:
+            self.model_manager.mark_unhealthy(endpoint)
+            raise
     
-    def estimate_time_remaining(
+    async def generate_batch(
         self,
-        completed: int,
-        total: int
-    ) -> float:
-        """Estimate time remaining based on current metrics"""
-        if completed == 0 or self.metrics["successful_generations"] == 0:
-            return 0
+        prompts: List[str],
+        progress_callback: Optional[callable] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate responses for a batch of prompts."""
+        start_time = time.time()
         
-        avg_time = self.metrics["total_time"] / self.metrics["successful_generations"]
-        remaining = total - completed
+        # Distribute prompts across workers
+        num_workers = min(self.config.processing.num_workers, len(prompts))
+        prompt_chunks = distribute_items(prompts, num_workers)
         
-        return remaining * avg_time
+        self.logger.info(
+            f"Processing {len(prompts)} prompts with {num_workers} workers"
+        )
+        
+        # Process chunks in parallel
+        tasks = []
+        for i, chunk in enumerate(prompt_chunks):
+            endpoint = self.model_manager.get_endpoint()
+            task = self._process_chunk(chunk, endpoint, progress_callback)
+            tasks.append(task)
+        
+        # Gather results
+        chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Flatten results
+        results = []
+        for chunk_result in chunk_results:
+            if isinstance(chunk_result, Exception):
+                self.logger.error(f"Chunk processing failed: {chunk_result}")
+                # Add error results for the chunk
+                results.extend([{"error": str(chunk_result)}] * len(prompts) // num_workers)
+            else:
+                results.extend(chunk_result)
+        
+        elapsed = time.time() - start_time
+        self.logger.info(
+            f"Processed {len(prompts)} prompts in {elapsed:.2f}s "
+            f"({len(prompts) / elapsed:.2f} prompts/s)"
+        )
+        
+        return results
+    
+    async def _process_chunk(
+        self,
+        prompts: List[str],
+        endpoint: ModelEndpoint,
+        progress_callback: Optional[callable] = None
+    ) -> List[Dict[str, Any]]:
+        """Process a chunk of prompts."""
+        client = self.clients[endpoint.url]
+        results = []
+        
+        for i, prompt in enumerate(prompts):
+            try:
+                if self.config.generation.num_samples > 1:
+                    # Generate multiple samples
+                    samples = await client.generate_samples(
+                        prompt,
+                        self.config.generation.num_samples
+                    )
+                    # Combine samples
+                    combined = {
+                        "choices": [],
+                        "model": endpoint.name
+                    }
+                    for sample in samples:
+                        if "choices" in sample:
+                            combined["choices"].extend(sample["choices"])
+                    results.append(combined)
+                else:
+                    # Generate single sample
+                    result = await client.generate(prompt)
+                    results.append(result)
+                
+                if progress_callback:
+                    progress_callback(1)
+            
+            except Exception as e:
+                self.logger.error(f"Failed to generate for prompt: {e}")
+                results.append({"error": str(e)})
+        
+        return results
+    
+    def extract_texts_from_responses(
+        self,
+        responses: List[Dict[str, Any]]
+    ) -> List[Union[str, List[str]]]:
+        """Extract text from vLLM responses."""
+        texts = []
+        
+        for response in responses:
+            if "error" in response:
+                if self.config.generation.num_samples > 1:
+                    texts.append([""] * self.config.generation.num_samples)
+                else:
+                    texts.append("")
+            elif "choices" in response:
+                if self.config.generation.num_samples > 1:
+                    # Multiple samples
+                    sample_texts = []
+                    for choice in response["choices"]:
+                        text = choice.get("text", "")
+                        sample_texts.append(text)
+                    texts.append(sample_texts)
+                else:
+                    # Single sample
+                    text = response["choices"][0].get("text", "") if response["choices"] else ""
+                    texts.append(text)
+            else:
+                if self.config.generation.num_samples > 1:
+                    texts.append([""] * self.config.generation.num_samples)
+                else:
+                    texts.append("")
+        
+        return texts
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get generation statistics."""
+        return self.model_manager.get_statistics()

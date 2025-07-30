@@ -1,191 +1,181 @@
-import pytest
+"""Tests for utility functions."""
 
-from vllm_generator import setup_logging, get_logger, ProgressLogger
-from vllm_generator import (
-    parse_args_string, parse_value, load_module_from_path,
-    parse_gpu_list, format_bytes, format_duration,
-    validate_output_path, merge_configs
+import pytest
+from pathlib import Path
+import pandas as pd
+import json
+
+from vllm_generator.utils import (
+    generate_batch_id,
+    chunk_dataframe,
+    distribute_items,
+    format_duration,
+    ensure_directory,
+    get_timestamp,
+    safe_json_loads,
+    truncate_text,
+    merge_dicts,
+    calculate_statistics
 )
 
 
-class TestLogging:
+class TestUtilities:
+    """Test utility functions."""
     
-    def test_setup_logging(self, temp_dir):
-        """Test logging setup"""
-        log_file = temp_dir / "test.log"
+    def test_generate_batch_id(self):
+        """Test batch ID generation."""
+        # String input
+        id1 = generate_batch_id("test_string")
+        assert len(id1) == 8
+        assert id1 == generate_batch_id("test_string")  # Should be deterministic
         
-        setup_logging(
-            level="INFO",
-            log_file=str(log_file)
-        )
+        # Dict input
+        data = {"key": "value", "number": 123}
+        id2 = generate_batch_id(data)
+        assert len(id2) == 8
+        assert id2 == generate_batch_id(data)  # Should be deterministic
         
-        logger = get_logger("test")
-        logger.info("Test message")
-        
-        # Check that log file was created
-        assert log_file.exists()
-        
-        # Check log content
-        log_content = log_file.read_text()
-        assert "Test message" in log_content
+        # Different inputs should give different IDs
+        assert id1 != id2
     
-    def test_progress_logger(self):
-        """Test progress logger"""
-        import logging
-        logger = logging.getLogger("test_progress")
+    def test_chunk_dataframe(self):
+        """Test dataframe chunking."""
+        df = pd.DataFrame({"col": range(10)})
         
-        progress_logger = ProgressLogger(logger, interval=3)
+        chunks = chunk_dataframe(df, 3)
         
-        messages = []
-        # Mock the logger
-        logger.info = lambda msg: messages.append(msg)
-        
-        # Log multiple messages
-        for i in range(10):
-            progress_logger.log(f"Processing item {i}")
-        
-        # Should log at intervals
-        assert len(messages) == 4  # Items 0, 3, 6, 9
-        assert "[3]" in messages[1]
-        assert "[6]" in messages[2]
-        
-        # Test force logging
-        progress_logger.log("Forced message", force=True)
-        assert len(messages) == 5
-
-
-class TestHelpers:
+        assert len(chunks) == 4  # 10 rows / 3 chunk size = 4 chunks
+        assert len(chunks[0]) == 3
+        assert len(chunks[1]) == 3
+        assert len(chunks[2]) == 3
+        assert len(chunks[3]) == 1
     
-    def test_parse_args_string(self):
-        """Test parsing argument strings"""
-        # Basic parsing
-        args = parse_args_string("model=gpt2,temperature=0.8")
-        assert args["model"] == "gpt2"
-        assert args["temperature"] == 0.8
+    def test_distribute_items(self):
+        """Test item distribution."""
+        items = list(range(10))
         
-        # Complex parsing with quotes
-        args = parse_args_string('prompt="Hello, world",max_tokens=100')
-        assert args["prompt"] == "Hello, world"
-        assert args["max_tokens"] == 100
+        # Distribute among 3 workers
+        distributed = distribute_items(items, 3)
         
-        # Boolean and None values
-        args = parse_args_string("use_cache=true,filter=none")
-        assert args["use_cache"] is True
-        assert args["filter"] is None
+        assert len(distributed) == 3
+        assert len(distributed[0]) == 4  # Worker 0 gets items 0, 3, 6, 9
+        assert len(distributed[1]) == 3  # Worker 1 gets items 1, 4, 7
+        assert len(distributed[2]) == 3  # Worker 2 gets items 2, 5, 8
         
-        # List values
-        args = parse_args_string("stop_sequences=[\\n,END],temps=[0.5,0.7,0.9]")
-        assert args["stop_sequences"] == ["\\n", "END"]
-        assert args["temps"] == [0.5, 0.7, 0.9]
+        # Verify all items are distributed
+        all_items = []
+        for chunk in distributed:
+            all_items.extend(chunk)
+        assert sorted(all_items) == items
+        
+        # Test with more workers than items
+        distributed = distribute_items([1, 2], 5)
+        assert len(distributed) == 2  # Only 2 non-empty chunks
     
-    def test_parse_value(self):
-        """Test value parsing"""
-        assert parse_value("true") is True
-        assert parse_value("false") is False
-        assert parse_value("none") is None
-        assert parse_value("123") == 123
-        assert parse_value("123.45") == 123.45
-        assert parse_value("hello") == "hello"
-        assert parse_value("[1,2,3]") == [1, 2, 3]
-        assert parse_value("[]") == []
-    
-    def test_load_module_from_path(self, temp_dir):
-        """Test loading Python module from file"""
-        module_file = temp_dir / "custom_module.py"
-        module_file.write_text("""
-def custom_function(x):
-    return x * 2
-
-CUSTOM_CONSTANT = 42
-""")
-        
-        module = load_module_from_path(str(module_file))
-        
-        assert hasattr(module, "custom_function")
-        assert hasattr(module, "CUSTOM_CONSTANT")
-        assert module.custom_function(5) == 10
-        assert module.CUSTOM_CONSTANT == 42
-    
-    def test_parse_gpu_list(self):
-        """Test GPU list parsing"""
-        # Single GPUs
-        assert parse_gpu_list("0,1,2,3") == [0, 1, 2, 3]
-        
-        # Range
-        assert parse_gpu_list("0-3") == [0, 1, 2, 3]
-        
-        # Mixed
-        assert parse_gpu_list("0,2-4,6") == [0, 2, 3, 4, 6]
-        
-        # Duplicates removed and sorted
-        assert parse_gpu_list("3,1,2,1,3") == [1, 2, 3]
-        
-        # Empty
-        assert parse_gpu_list("") == []
-    
-    def test_format_bytes(self):
-        """Test byte formatting"""
-        assert format_bytes(100) == "100.0 B"
-        assert format_bytes(1024) == "1.0 KB"
-        assert format_bytes(1024 * 1024) == "1.0 MB"
-        assert format_bytes(1024 * 1024 * 1024) == "1.0 GB"
-        assert format_bytes(1536 * 1024) == "1.5 MB"
+    def test_distribute_items_invalid(self):
+        """Test distribute_items with invalid input."""
+        with pytest.raises(ValueError):
+            distribute_items([1, 2, 3], 0)
     
     def test_format_duration(self):
-        """Test duration formatting"""
-        assert format_duration(30) == "30.0s"
+        """Test duration formatting."""
+        assert format_duration(45.5) == "45.5s"
         assert format_duration(90) == "1.5m"
-        assert format_duration(3600) == "1.0h"
-        assert format_duration(5400) == "1.5h"
+        assert format_duration(3900) == "1.1h"
+        assert format_duration(7200) == "2.0h"
     
-    def test_validate_output_path(self, temp_dir):
-        """Test output path validation"""
-        # New file - should work
-        new_file = temp_dir / "new_output.parquet"
-        validated = validate_output_path(str(new_file))
-        assert validated == new_file
+    def test_ensure_directory(self, temp_dir):
+        """Test directory creation."""
+        new_dir = temp_dir / "nested" / "directory"
         
-        # Existing file without overwrite - should fail
-        existing_file = temp_dir / "existing.parquet"
-        existing_file.write_text("test")
+        result = ensure_directory(new_dir)
         
-        with pytest.raises(FileExistsError):
-            validate_output_path(str(existing_file), overwrite=False)
+        assert new_dir.exists()
+        assert new_dir.is_dir()
+        assert result == new_dir
         
-        # Existing file with overwrite - should work
-        validated = validate_output_path(str(existing_file), overwrite=True)
-        assert validated == existing_file
-        
-        # Non-existent parent directory - should create it
-        nested_file = temp_dir / "new_dir" / "output.parquet"
-        validated = validate_output_path(str(nested_file))
-        assert validated.parent.exists()
+        # Should not fail if directory already exists
+        result2 = ensure_directory(new_dir)
+        assert result2 == new_dir
     
-    def test_merge_configs(self):
-        """Test configuration merging"""
+    def test_get_timestamp(self):
+        """Test timestamp generation."""
+        ts1 = get_timestamp()
+        assert len(ts1) == 15  # YYYYMMDD_HHMMSS
+        assert ts1[:8].isdigit()  # Date part
+        assert ts1[8] == "_"
+        assert ts1[9:].isdigit()  # Time part
+    
+    def test_safe_json_loads(self):
+        """Test safe JSON loading."""
+        # Valid JSON
+        assert safe_json_loads('{"key": "value"}') == {"key": "value"}
+        assert safe_json_loads('[1, 2, 3]') == [1, 2, 3]
+        
+        # Invalid JSON
+        assert safe_json_loads('invalid json', default={}) == {}
+        assert safe_json_loads('invalid json', default=None) is None
+        assert safe_json_loads('', default=[]) == []
+    
+    def test_truncate_text(self):
+        """Test text truncation."""
+        # Short text
+        assert truncate_text("Short", max_length=10) == "Short"
+        
+        # Long text
+        long_text = "This is a very long text that needs truncation"
+        assert truncate_text(long_text, max_length=20) == "This is a very lo..."
+        assert len(truncate_text(long_text, max_length=20)) == 20
+        
+        # Custom suffix
+        assert truncate_text(long_text, max_length=20, suffix="[...]") == "This is a very[...]"
+    
+    def test_merge_dicts(self):
+        """Test dictionary merging."""
         base = {
-            "model": "gpt2",
-            "params": {
-                "temperature": 0.7,
-                "max_tokens": 100
-            },
-            "features": ["feature1", "feature2"]
+            "a": 1,
+            "b": {"x": 2, "y": 3},
+            "c": [1, 2, 3]
         }
         
         override = {
-            "params": {
-                "temperature": 0.9,
-                "top_p": 0.95
-            },
-            "features": ["feature3"],
-            "new_field": "value"
+            "a": 10,
+            "b": {"y": 30, "z": 40},
+            "d": "new"
         }
         
-        merged = merge_configs(base, override)
+        result = merge_dicts(base, override)
         
-        assert merged["model"] == "gpt2"  # Preserved
-        assert merged["params"]["temperature"] == 0.9  # Overridden
-        assert merged["params"]["max_tokens"] == 100  # Preserved
-        assert merged["params"]["top_p"] == 0.95  # Added
-        assert merged["features"] == ["feature3"]  # Replaced (not merged)
-        assert merged["new_field"] == "value"  # Added
+        assert result["a"] == 10  # Overridden
+        assert result["b"]["x"] == 2  # Preserved
+        assert result["b"]["y"] == 30  # Overridden
+        assert result["b"]["z"] == 40  # Added
+        assert result["c"] == [1, 2, 3]  # Preserved
+        assert result["d"] == "new"  # Added
+        
+        # Original dicts should be unchanged
+        assert base["a"] == 1
+        assert base["b"]["y"] == 3
+    
+    def test_calculate_statistics(self):
+        """Test statistics calculation."""
+        # Normal case
+        values = [1, 2, 3, 4, 5]
+        stats = calculate_statistics(values)
+        
+        assert stats["count"] == 5
+        assert stats["mean"] == 3.0
+        assert stats["min"] == 1
+        assert stats["max"] == 5
+        assert stats["std"] > 0
+        
+        # Single value
+        stats = calculate_statistics([42])
+        assert stats["count"] == 1
+        assert stats["mean"] == 42
+        assert stats["std"] == 0
+        
+        # Empty list
+        stats = calculate_statistics([])
+        assert stats["count"] == 0
+        assert stats["mean"] == 0

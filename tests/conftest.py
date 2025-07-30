@@ -1,76 +1,152 @@
+"""Pytest configuration and fixtures."""
+
 import pytest
-import pandas as pd
 import tempfile
+import pandas as pd
 from pathlib import Path
 import shutil
+from typing import Dict, Any, List
+import json
+
 
 @pytest.fixture
 def temp_dir():
-    """Create a temporary directory for tests"""
-    temp_dir = tempfile.mkdtemp()
-    yield Path(temp_dir)
-    shutil.rmtree(temp_dir)
+    """Create a temporary directory."""
+    temp_path = tempfile.mkdtemp()
+    yield Path(temp_path)
+    shutil.rmtree(temp_path)
+
 
 @pytest.fixture
-def sample_dataframe():
-    """Create a sample dataframe for testing"""
-    return pd.DataFrame({
+def sample_parquet_file(temp_dir):
+    """Create a sample parquet file for testing."""
+    data = {
         "question": [
             "What is the capital of France?",
-            "Explain photosynthesis",
-            "How do computers work?",
+            "Explain quantum computing",
+            "How do neural networks work?",
             "What is machine learning?",
             "Describe the water cycle"
         ],
-        "category": ["Geography", "Biology", "Technology", "AI", "Science"],
-        "difficulty": ["Easy", "Medium", "Hard", "Medium", "Easy"]
-    })
-
-@pytest.fixture
-def sample_parquet_file(temp_dir, sample_dataframe):
-    """Create a sample parquet file"""
-    file_path = temp_dir / "test_questions.parquet"
-    sample_dataframe.to_parquet(file_path)
+        "id": [1, 2, 3, 4, 5],
+        "category": ["geography", "physics", "ai", "ai", "science"],
+        "difficulty": [1, 3, 3, 2, 2]
+    }
+    df = pd.DataFrame(data)
+    
+    file_path = temp_dir / "test_data.parquet"
+    df.to_parquet(file_path)
+    
     return file_path
 
-@pytest.fixture
-def mock_generation_results():
-    """Mock generation results"""
-    return [
-        {
-            "idx": 0,
-            "prompt": "What is the capital of France?",
-            "response": "The capital of France is Paris.",
-            "tokens": 8,
-            "latency": 0.1,
-            "original_question": "What is the capital of France?"
-        },
-        {
-            "idx": 1,
-            "prompt": "Explain photosynthesis",
-            "response": "Photosynthesis is the process by which plants convert light energy into chemical energy.",
-            "tokens": 15,
-            "latency": 0.12,
-            "original_question": "Explain photosynthesis"
-        }
-    ]
 
 @pytest.fixture
-def sample_config():
-    """Sample configuration dictionary"""
+def sample_config_dict():
+    """Create a sample configuration dictionary."""
     return {
-        "model_config": {
-            "model": "gpt2",
-            "temperature": 0.7,
-            "max_tokens": 100
+        "data": {
+            "input_path": "test_input.parquet",
+            "output_path": "test_output.parquet",
+            "input_column": "question",
+            "output_column": "response"
         },
-        "generation_config": {
+        "models": [
+            {
+                "url": "http://localhost:8000",
+                "name": "test_model"
+            }
+        ],
+        "generation": {
+            "num_samples": 1,
+            "temperature": 1.0,
+            "max_tokens": 512
+        },
+        "processing": {
             "batch_size": 2,
-            "num_repeats": 1,
-            "error_handling": "skip"
+            "num_workers": 1
         },
-        "data_config": {
-            "question_column": "question",
-            "output_format": "wide"
+        "retry": {
+            "max_retries": 3,
+            "retry_delay": 1.0,
+            "timeout": 300.0
+        },
+        "logging": {
+            "level": "INFO"
+        }
+    }
+
+
+@pytest.fixture
+def mock_vllm_response():
+    """Create a mock vLLM response."""
+    return {
+        "id": "cmpl-123",
+        "object": "text_completion",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [
+            {
+                "text": "This is a test response",
+                "index": 0,
+                "logprobs": None,
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15
+        }
+    }
+
+
+@pytest.fixture
+def mock_vllm_responses():
+    """Create multiple mock vLLM responses."""
+    responses = []
+    for i in range(5):
+        responses.append({
+            "id": f"cmpl-{i}",
+            "object": "text_completion",
+            "created": 1234567890 + i,
+            "model": "test-model",
+            "choices": [
+                {
+                    "text": f"Response {i}: This is a test response",
+                    "index": 0,
+                    "logprobs": None,
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18
+            }
+        })
+    return responses
+
+
+@pytest.fixture
+def mock_multi_sample_response():
+    """Create a mock response with multiple samples."""
+    return {
+        "id": "cmpl-multi",
+        "object": "text_completion",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [
+            {
+                "text": f"Sample {i}: This is a test response",
+                "index": i,
+                "logprobs": None,
+                "finish_reason": "stop"
+            }
+            for i in range(3)
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 24,
+            "total_tokens": 34
         }
     }

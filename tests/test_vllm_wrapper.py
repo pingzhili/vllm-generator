@@ -1,97 +1,191 @@
-from vllm_generator import ModelConfig
-from vllm_generator import MockVLLMModel, VLLMModel
+"""Tests for vLLM client wrapper."""
+
+import pytest
+import httpx
+from unittest.mock import AsyncMock, patch
+import asyncio
+
+from vllm_generator.models import VLLMClient
+from vllm_generator.config.schemas import ModelConfig, GenerationConfig, RetryConfig
 
 
-class TestMockVLLMModel:
-    """Test the mock vLLM model (which works on Mac)"""
-
-    def test_mock_model_initialization(self):
-        """Test mock model initialization"""
-        config = ModelConfig(model="gpt2")
-        model = MockVLLMModel(config)
-
-        assert model.config == config
-        assert len(model.response_templates) > 0
-
-    def test_mock_model_generate(self):
-        """Test mock model generation"""
-        config = ModelConfig(model="gpt2", temperature=0.7)
-        model = MockVLLMModel(config)
-
-        prompts = [
-            "What is AI?",
-            "Explain quantum computing",
-            "How does the internet work?"
-        ]
-
-        results = model.generate(prompts)
-
-        assert len(results) == 3
-        for i, result in enumerate(results):
-            assert result["prompt"] == prompts[i]
-            assert isinstance(result["response"], str)
-            assert result["tokens"] > 0
-            assert result["latency"] > 0
-            assert result["finish_reason"] == "stop"
-
-    def test_mock_model_temperature_variation(self):
-        """Test that mock model responds to temperature changes"""
-        config = ModelConfig(model="gpt2")
-        model = MockVLLMModel(config)
-
-        # Low temperature
-        results_low = model.generate(
-            ["Test prompt"],
-            {"temperature": 0.1}
-        )
-
-        # High temperature
-        results_high = model.generate(
-            ["Test prompt"],
-            {"temperature": 1.5}
-        )
-
-        # High temperature should have additional text
-        assert "Temperature:" in results_high[0]["response"]
-        assert "Temperature:" not in results_low[0]["response"]
-
-    def test_mock_model_shutdown(self):
-        """Test mock model shutdown"""
-        config = ModelConfig(model="gpt2")
-        model = MockVLLMModel(config)
-
-        # Should not raise any errors
-        model.shutdown()
-
-
-class TestVLLMModel:
-    """Test the VLLMModel wrapper"""
-
-    def test_vllm_model_fallback_to_mock(self):
-        """Test that VLLMModel falls back to MockVLLMModel on Mac"""
-        config = ModelConfig(model="gpt2")
-        model = VLLMModel(config)
-
-        # On Mac, should fall back to MockVLLMModel
-        assert isinstance(model, MockVLLMModel)
-
-        # Should still work normally
-        results = model.generate(["Test prompt"])
-        assert len(results) == 1
-        assert isinstance(results[0]["response"], str)
-
-    def test_model_config_to_dict(self):
-        """Test model configuration serialization"""
-        config = ModelConfig(
-            model="meta-llama/Llama-2-7b-hf",
-            temperature=0.8,
-            max_tokens=256,
-            stop_sequences=["\\n", "END"]
-        )
-
-        config_dict = config.to_dict()
-
-        assert config_dict["model"] == "meta-llama/Llama-2-7b-hf"
-        assert config_dict["temperature"] == 0.8
-        assert config_dict["max_tokens"] == 256
-        assert config_dict["stop_sequences"] == ["\\n", "END"]
+class TestVLLMClient:
+    """Test VLLMClient functionality."""
+    
+    @pytest.fixture
+    def client_config(self):
+        """Create test client configuration."""
+        return {
+            "model_config": ModelConfig(
+                url="http://localhost:8000",
+                name="test_model"
+            ),
+            "generation_config": GenerationConfig(
+                num_samples=1,
+                temperature=1.0,
+                max_tokens=512
+            ),
+            "retry_config": RetryConfig(
+                max_retries=3,
+                retry_delay=1.0,
+                timeout=300.0
+            )
+        }
+    
+    def test_client_initialization(self, client_config):
+        """Test client initialization."""
+        client = VLLMClient(**client_config)
+        
+        assert client.model_config.name == "test_model"
+        assert client.generation_config.temperature == 1.0
+        assert client.retry_config.max_retries == 3
+        assert client.completions_endpoint == "/v1/completions"
+    
+    @pytest.mark.asyncio
+    async def test_context_manager(self, client_config):
+        """Test async context manager."""
+        async with VLLMClient(**client_config) as client:
+            assert client is not None
+            assert hasattr(client, 'client')
+    
+    def test_prepare_request_basic(self, client_config):
+        """Test basic request preparation."""
+        client = VLLMClient(**client_config)
+        
+        request = client._prepare_request("Test prompt")
+        
+        assert request["prompt"] == "Test prompt"
+        assert request["max_tokens"] == 512
+        assert request["temperature"] == 1.0
+        assert request["n"] == 1
+    
+    def test_prepare_request_with_temperature_schedule(self, client_config):
+        """Test request preparation with temperature schedule."""
+        client_config["generation_config"].num_samples = 3
+        client_config["generation_config"].temperature = [0.5, 0.7, 0.9]
+        
+        client = VLLMClient(**client_config)
+        
+        # Different temperatures for different samples
+        req1 = client._prepare_request("Test", sample_idx=0)
+        assert req1["temperature"] == 0.5
+        
+        req2 = client._prepare_request("Test", sample_idx=1)
+        assert req2["temperature"] == 0.7
+        
+        req3 = client._prepare_request("Test", sample_idx=2)
+        assert req3["temperature"] == 0.9
+    
+    def test_prepare_request_with_stop_sequences(self, client_config):
+        """Test request preparation with stop sequences."""
+        client_config["generation_config"].stop_sequences = ["###", "END"]
+        
+        client = VLLMClient(**client_config)
+        request = client._prepare_request("Test prompt")
+        
+        assert request["stop"] == ["###", "END"]
+    
+    @pytest.mark.asyncio
+    async def test_health_check_success(self, client_config):
+        """Test successful health check."""
+        client = VLLMClient(**client_config)
+        
+        # Mock the HTTP client
+        with patch.object(client.client, 'get', new_callable=AsyncMock) as mock_get:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_get.return_value = mock_response
+            
+            result = await client.health_check()
+            
+            assert result is True
+            mock_get.assert_called_once_with("/health")
+    
+    @pytest.mark.asyncio
+    async def test_health_check_failure(self, client_config):
+        """Test failed health check."""
+        client = VLLMClient(**client_config)
+        
+        with patch.object(client.client, 'get', new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = httpx.ConnectError("Connection failed")
+            
+            result = await client.health_check()
+            
+            assert result is False
+    
+    @pytest.mark.asyncio
+    async def test_list_models(self, client_config):
+        """Test listing models."""
+        client = VLLMClient(**client_config)
+        
+        with patch.object(client.client, 'get', new_callable=AsyncMock) as mock_get:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "data": [
+                    {"id": "model1"},
+                    {"id": "model2"}
+                ]
+            }
+            mock_response.raise_for_status = AsyncMock()
+            mock_get.return_value = mock_response
+            
+            models = await client.list_models()
+            
+            assert models == ["model1", "model2"]
+            mock_get.assert_called_once_with("/v1/models")
+    
+    @pytest.mark.asyncio
+    async def test_generate_success(self, client_config, mock_vllm_response):
+        """Test successful generation."""
+        client = VLLMClient(**client_config)
+        
+        with patch.object(client.client, 'post', new_callable=AsyncMock) as mock_post:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_vllm_response
+            mock_response.raise_for_status = AsyncMock()
+            mock_post.return_value = mock_response
+            
+            result = await client.generate("Test prompt")
+            
+            assert result == mock_vllm_response
+            mock_post.assert_called_once()
+            
+            # Check request payload
+            call_args = mock_post.call_args
+            assert call_args[0][0] == "/v1/completions"
+            assert call_args[1]["json"]["prompt"] == "Test prompt"
+    
+    @pytest.mark.asyncio
+    async def test_generate_batch(self, client_config, mock_vllm_responses):
+        """Test batch generation."""
+        client = VLLMClient(**client_config)
+        
+        with patch.object(client, 'generate', new_callable=AsyncMock) as mock_generate:
+            mock_generate.side_effect = mock_vllm_responses[:3]
+            
+            prompts = ["Prompt 1", "Prompt 2", "Prompt 3"]
+            results = await client.generate_batch(prompts)
+            
+            assert len(results) == 3
+            assert all("choices" in r for r in results)
+            assert mock_generate.call_count == 3
+    
+    @pytest.mark.asyncio
+    async def test_generate_samples(self, client_config, mock_vllm_response):
+        """Test generating multiple samples."""
+        client_config["generation_config"].num_samples = 3
+        client = VLLMClient(**client_config)
+        
+        with patch.object(client, 'generate', new_callable=AsyncMock) as mock_generate:
+            mock_generate.return_value = mock_vllm_response
+            
+            results = await client.generate_samples("Test prompt", num_samples=3)
+            
+            assert len(results) == 3
+            assert mock_generate.call_count == 3
+            
+            # Verify sample indices
+            for i, call in enumerate(mock_generate.call_args_list):
+                assert call[1]["sample_idx"] == i

@@ -1,335 +1,408 @@
-#!/usr/bin/env python3
-"""
-vLLM Generator - Scalable text generation for dataframes using vLLM
-"""
+"""Main entry point for vLLM generator."""
 
-import sys
-import logging
+import asyncio
 import argparse
+import sys
 from pathlib import Path
+from typing import Dict, Any, Optional
+import yaml
 
-from vllm_generator.models import ModelConfig
-from vllm_generator.config import ConfigParser, validate_config
-from vllm_generator.config.schemas import create_config_from_args
-from vllm_generator.pipeline import PipelineManager
-from vllm_generator.utils import setup_logging, parse_args_string, parse_gpu_list
-from vllm_generator.utils.helpers import validate_output_path
-
-logger = logging.getLogger(__name__)
+from .config import ConfigParser, Config
+from .pipeline import GenerationPipeline
+from .utils import get_logger
+from . import __version__
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """Create argument parser with all CLI options"""
+    """Create argument parser."""
     parser = argparse.ArgumentParser(
-        description="vLLM Generator - Scalable text generation for dataframes",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        prog="vllm-generator",
+        description="vLLM Data Generation Pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Generate with configuration file
+  vllm-generator generate --config config.yaml
+
+  # Generate with command line arguments
+  vllm-generator generate -i data.parquet -o output.parquet -m http://localhost:8000
+
+  # Generate with multiple samples
+  vllm-generator generate -c config.yaml --num-samples 5 --temperature 0.8
+
+  # Resume from checkpoint
+  vllm-generator generate -c config.yaml --resume
+
+  # Validate configuration
+  vllm-generator validate --config config.yaml
+
+  # List available models
+  vllm-generator list-models --model-url http://localhost:8000
+        """
     )
     
-    # Basic I/O Arguments
-    io_group = parser.add_argument_group("Input/Output")
-    io_group.add_argument("--input", "-i", required=True, help="Input parquet file path")
-    io_group.add_argument("--output", "-o", help="Output parquet file path or directory")
-    io_group.add_argument("--question-column", default="question", help="Column name containing questions")
-    io_group.add_argument("--output-column-prefix", default="response", help="Prefix for output columns")
-    io_group.add_argument("--output-format", choices=["wide", "long", "nested"], default="wide",
-                         help="Format for repeated outputs")
-    io_group.add_argument("--overwrite", action="store_true", help="Overwrite existing output file")
+    parser.add_argument(
+        "-v", "--version",
+        action="version",
+        version=f"%(prog)s {__version__}"
+    )
     
-    # Model Configuration
-    model_group = parser.add_argument_group("Model Configuration")
-    model_group.add_argument("--model", "-m", help="Model name or path")
-    model_group.add_argument("--model-revision", help="Model revision/branch")
-    model_group.add_argument("--tokenizer", help="Tokenizer name (if different from model)")
-    model_group.add_argument("--dtype", choices=["auto", "float16", "bfloat16", "float32"], 
-                            default="auto", help="Model dtype")
-    model_group.add_argument("--device", default="cuda", help="Device: cuda or cpu")
-    model_group.add_argument("--gpu-memory-utilization", type=float, default=0.9,
-                            help="GPU memory fraction to use")
-    model_group.add_argument("--tensor-parallel-size", type=int, default=1,
-                            help="Number of GPUs for tensor parallelism")
-    model_group.add_argument("--max-model-len", type=int, help="Maximum sequence length")
-    model_group.add_argument("--trust-remote-code", action="store_true",
-                            help="Trust remote code in model files")
+    # Global arguments
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Set logging level (default: INFO)"
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        help="Log to file in addition to console"
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output"
+    )
     
-    # Generation Parameters
-    gen_group = parser.add_argument_group("Generation Parameters")
-    gen_group.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature")
-    gen_group.add_argument("--top-p", type=float, default=1.0, help="Top-p sampling")
-    gen_group.add_argument("--top-k", type=int, default=-1, help="Top-k sampling")
-    gen_group.add_argument("--max-tokens", type=int, default=512, help="Maximum tokens to generate")
-    gen_group.add_argument("--min-tokens", type=int, default=1, help="Minimum tokens to generate")
-    gen_group.add_argument("--repetition-penalty", type=float, default=1.0, help="Repetition penalty")
-    gen_group.add_argument("--presence-penalty", type=float, default=0.0, help="Presence penalty")
-    gen_group.add_argument("--frequency-penalty", type=float, default=0.0, help="Frequency penalty")
-    gen_group.add_argument("--stop-sequences", type=str, help="Comma-separated stop sequences")
-    gen_group.add_argument("--seed", type=int, help="Random seed for reproducibility")
-    gen_group.add_argument("--best-of", type=int, help="Generate best_of sequences and return best")
+    # Subcommands
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
-    # Repeat Generation
-    repeat_group = parser.add_argument_group("Repeat Generation")
-    repeat_group.add_argument("--num-repeats", "-n", type=int, default=1,
-                             help="Number of times to generate per question")
-    repeat_group.add_argument("--repeat-strategy", choices=["independent", "temperature_schedule", "diverse"],
-                             default="independent", help="Strategy for repeat generation")
-    repeat_group.add_argument("--temperature-schedule", type=str,
-                             help="Temperature values for each repeat (comma-separated)")
-    repeat_group.add_argument("--seed-increment", type=int, default=1,
-                             help="Increment seed by this value for each repeat")
-    repeat_group.add_argument("--repeat-order", 
-                             choices=["item_first", "batch_first"],
-                             default="item_first", 
-                             help="Processing order: item_first (AAAA BBBB) or batch_first (ABCD ABCD)")
-    repeat_group.add_argument("--aggregate-responses", action="store_true",
-                             help="Aggregate repeated responses into single output")
-    repeat_group.add_argument("--aggregation-method", 
-                             choices=["majority_vote", "longest", "highest_score"],
-                             default="first", help="Method for aggregating responses")
+    # Generate command
+    generate_parser = subparsers.add_parser(
+        "generate",
+        help="Generate responses using vLLM models"
+    )
+    add_generate_args(generate_parser)
     
-    # Processing Configuration
-    proc_group = parser.add_argument_group("Processing Configuration")
-    proc_group.add_argument("--batch-size", "-b", type=int, default=32,
-                           help="Batch size for generation")
-    proc_group.add_argument("--max-samples", type=int, help="Maximum samples to process (for testing)")
-    proc_group.add_argument("--start-index", type=int, help="Start processing from this index")
-    proc_group.add_argument("--end-index", type=int, help="End processing at this index")
-    proc_group.add_argument("--checkpoint-frequency", type=int, default=100,
-                           help="Save checkpoint every N batches")
-    proc_group.add_argument("--resume-from-checkpoint", help="Resume from checkpoint file")
-    proc_group.add_argument("--num-data-workers", type=int, default=4,
-                           help="Number of data loading workers")
+    # Validate command
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate configuration file"
+    )
+    validate_parser.add_argument(
+        "--config", "-c",
+        type=Path,
+        required=True,
+        help="Path to YAML configuration file"
+    )
     
-    # Prompt Configuration
-    prompt_group = parser.add_argument_group("Prompt Configuration")
-    prompt_group.add_argument("--prompt-template", help="Template with {question} placeholder")
-    prompt_group.add_argument("--system-prompt", help="System prompt to prepend")
-    prompt_group.add_argument("--few-shot-examples", help="Path to JSON file with few-shot examples")
-    prompt_group.add_argument("--use-chat-template", action="store_true",
-                             help="Use tokenizer's built-in chat template")
-    prompt_group.add_argument("--add-bos-token", action="store_true",
-                             help="Add beginning of sequence token")
-    prompt_group.add_argument("--add-eos-token", action="store_true",
-                             help="Add end of sequence token")
-    
-    # Performance & Resource Management
-    perf_group = parser.add_argument_group("Performance & Resource Management")
-    perf_group.add_argument("--swap-space", type=int, default=4,
-                           help="CPU swap space size in GB")
-    perf_group.add_argument("--cpu-offload-gb", type=int,
-                           help="Offload model weights to CPU (GB)")
-    perf_group.add_argument("--quantization", choices=["awq", "gptq", "squeezellm"],
-                           help="Quantization method")
-    perf_group.add_argument("--enforce-eager", action="store_true",
-                           help="Disable CUDA graph optimization")
-    perf_group.add_argument("--enable-prefix-caching", action="store_true",
-                           help="Enable automatic prefix caching")
-    perf_group.add_argument("--max-num-seqs", type=int,
-                           help="Maximum number of sequences per iteration")
-    perf_group.add_argument("--disable-log-stats", action="store_true",
-                           help="Disable logging statistics")
-    
-    # Data Parallelism Configuration
-    parallel_group = parser.add_argument_group("Data Parallelism Configuration")
-    parallel_group.add_argument("--parallel-mode", 
-                               choices=["single", "multi_server", "ray"],
-                               default="single", help="Parallelism mode")
-    parallel_group.add_argument("--num-workers", type=int, default=1,
-                               help="Number of parallel workers", dest="parallel_workers")
-    parallel_group.add_argument("--worker-gpus", type=str,
-                               help="GPU IDs for workers (comma-separated, e.g., 0,1,2,3)")
-    parallel_group.add_argument("--ports", type=str,
-                               help="Base port for vLLM servers")
-    parallel_group.add_argument("--ray-address", help="Ray cluster address (for ray mode)")
-    parallel_group.add_argument("--ray-num-cpus", type=int, help="CPUs per Ray worker")
-    parallel_group.add_argument("--ray-num-gpus", type=int, help="GPUs per Ray worker")
-    
-    # Work Distribution
-    dist_group = parser.add_argument_group("Work Distribution")
-    dist_group.add_argument("--sharding-strategy", 
-                           choices=["round_robin", "contiguous", "hash", "balanced"],
-                           default="contiguous", help="How to split data")
-    dist_group.add_argument("--shard-column", help="Column to use for hash-based sharding")
-    dist_group.add_argument("--dynamic-batching", action="store_true",
-                           help="Enable dynamic work stealing between workers")
-    dist_group.add_argument("--prefetch-batches", type=int, default=2,
-                           help="Number of batches to prefetch per worker")
-    
-    # Output & Logging
-    output_group = parser.add_argument_group("Output & Logging")
-    output_group.add_argument("--output-dir", default="./outputs",
-                             help="Directory for logs and artifacts")
-    output_group.add_argument("--log-level", 
-                             choices=["debug", "info", "warning", "error"],
-                             default="info", help="Logging level")
-    output_group.add_argument("--save-metadata", action="store_true", default=True,
-                             help="Save generation metadata")
-    output_group.add_argument("--metadata-file", help="Path to save metadata")
-    output_group.add_argument("--track-token-usage", action="store_true",
-                             help="Track input/output token counts")
-    output_group.add_argument("--save-raw-outputs", action="store_true",
-                             help="Save raw model outputs before post-processing")
-    output_group.add_argument("--progress-bar", action="store_true", default=True,
-                             help="Show progress bar")
-    output_group.add_argument("--quiet", "-q", action="store_true",
-                             help="Minimal output")
-    output_group.add_argument("--verbose", "-v", action="store_true",
-                             help="Verbose output")
-    
-    # Advanced Features
-    adv_group = parser.add_argument_group("Advanced Features")
-    adv_group.add_argument("--config-file", "-c", help="Path to YAML/JSON configuration file")
-    adv_group.add_argument("--dry-run", action="store_true",
-                          help="Validate configuration without running")
-    adv_group.add_argument("--validate-only", action="store_true",
-                          help="Only validate input data")
-    adv_group.add_argument("--preprocessing-fn", help="Path to Python file with preprocessing function")
-    adv_group.add_argument("--postprocessing-fn", help="Path to Python file with postprocessing function")
-    adv_group.add_argument("--error-handling", choices=["skip", "retry", "fail"],
-                          default="skip", help="Strategy for handling errors")
-    adv_group.add_argument("--max-retries", type=int, default=3,
-                          help="Maximum retries for failed generations")
-    adv_group.add_argument("--timeout-per-request", type=float,
-                          help="Timeout in seconds per generation request")
-    adv_group.add_argument("--filter-column", help="Column name for filtering rows")
-    adv_group.add_argument("--filter-value", help="Value to filter by")
-    adv_group.add_argument("--sample-fraction", type=float,
-                          help="Fraction of data to sample randomly")
-    
-    # Model arguments (catch-all)
-    parser.add_argument("--model-args", type=str,
-                       help="Additional model arguments as key=value pairs")
+    # List models command
+    list_parser = subparsers.add_parser(
+        "list-models",
+        help="List available models from vLLM servers"
+    )
+    list_parser.add_argument(
+        "--model-url", "-m",
+        type=str,
+        help="vLLM server URL"
+    )
+    list_parser.add_argument(
+        "--model-urls",
+        nargs="+",
+        help="Multiple vLLM server URLs"
+    )
+    list_parser.add_argument(
+        "--config", "-c",
+        type=Path,
+        help="Configuration file with model URLs"
+    )
     
     return parser
 
 
-def main():
-    """Main entry point"""
-    parser = create_parser()
-    args = parser.parse_args()
+def add_generate_args(parser: argparse.ArgumentParser) -> None:
+    """Add arguments for generate command."""
+    # Configuration
+    config_group = parser.add_argument_group("Configuration")
+    config_group.add_argument(
+        "--config", "-c",
+        type=Path,
+        help="Path to YAML configuration file"
+    )
+    config_group.add_argument(
+        "--save-config",
+        type=Path,
+        help="Save current configuration to file"
+    )
     
-    # Setup logging
-    log_level = "DEBUG" if args.verbose else ("WARNING" if args.quiet else args.log_level.upper())
-    setup_logging(level=log_level)
+    # Data options
+    data_group = parser.add_argument_group("Data Options")
+    data_group.add_argument(
+        "--input", "-i",
+        type=Path,
+        help="Input parquet file path"
+    )
+    data_group.add_argument(
+        "--output", "-o",
+        type=Path,
+        help="Output parquet file path"
+    )
+    data_group.add_argument(
+        "--input-column",
+        type=str,
+        help="Column name containing input text (default: question)"
+    )
+    data_group.add_argument(
+        "--output-column",
+        type=str,
+        help="Column name for output text (default: response)"
+    )
+    data_group.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        help="Directory for saving checkpoints (default: ./checkpoints)"
+    )
+    data_group.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from last checkpoint"
+    )
+    
+    # Model configuration
+    model_group = parser.add_argument_group("Model Configuration")
+    model_group.add_argument(
+        "--model-url", "-m",
+        type=str,
+        help="vLLM server URL (e.g., http://localhost:8000)"
+    )
+    model_group.add_argument(
+        "--model-urls",
+        nargs="+",
+        help="Multiple vLLM server URLs for parallel processing"
+    )
+    
+    # Generation parameters
+    gen_group = parser.add_argument_group("Generation Parameters")
+    gen_group.add_argument(
+        "--num-samples", "-n",
+        type=int,
+        help="Number of samples per input (default: 1)"
+    )
+    gen_group.add_argument(
+        "--temperature", "-t",
+        type=float,
+        help="Sampling temperature (default: 1.0)"
+    )
+    gen_group.add_argument(
+        "--top-p",
+        type=float,
+        help="Top-p sampling parameter (default: 1.0)"
+    )
+    gen_group.add_argument(
+        "--top-k",
+        type=int,
+        help="Top-k sampling parameter (default: -1)"
+    )
+    gen_group.add_argument(
+        "--max-tokens",
+        type=int,
+        help="Maximum tokens to generate (default: 512)"
+    )
+    gen_group.add_argument(
+        "--stop-sequences",
+        nargs="+",
+        help="Stop sequences for generation"
+    )
+    gen_group.add_argument(
+        "--seed",
+        type=int,
+        help="Random seed for reproducibility"
+    )
+    
+    # Processing options
+    proc_group = parser.add_argument_group("Processing Options")
+    proc_group.add_argument(
+        "--batch-size", "-b",
+        type=int,
+        help="Batch size for processing (default: 32)"
+    )
+    proc_group.add_argument(
+        "--num-workers", "-w",
+        type=int,
+        help="Number of parallel workers (default: 1)"
+    )
+    proc_group.add_argument(
+        "--timeout",
+        type=float,
+        help="Request timeout in seconds (default: 300)"
+    )
+    proc_group.add_argument(
+        "--max-retries",
+        type=int,
+        help="Maximum retries for failed requests (default: 3)"
+    )
+    proc_group.add_argument(
+        "--retry-delay",
+        type=float,
+        help="Delay between retries in seconds (default: 1.0)"
+    )
+    
+    # Display options
+    display_group = parser.add_argument_group("Display Options")
+    display_group.add_argument(
+        "--progress-bar",
+        action="store_true",
+        default=True,
+        help="Show progress bar (default)"
+    )
+    display_group.add_argument(
+        "--no-progress-bar",
+        dest="progress_bar",
+        action="store_false",
+        help="Disable progress bar"
+    )
+    display_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run without making actual API calls"
+    )
+
+
+async def generate_command(args: argparse.Namespace) -> int:
+    """Execute generate command."""
+    logger = get_logger("CLI")
     
     try:
-        # Load configuration
-        config = {}
-        
-        # 1. Load from config file if provided
-        if args.config_file:
-            logger.info(f"Loading configuration from {args.config_file}")
-            file_config = ConfigParser.load_config(args.config_file)
-            config = ConfigParser.merge_configs(config, file_config)
-
-        # 2. Load from environment variables
-        env_config = ConfigParser.load_from_env()
-        if env_config:
-            logger.info("Loading configuration from environment variables")
-            config = ConfigParser.merge_configs(config, env_config)
-        
-        # 3. Override the command line arguments
-        cli_config = create_config_from_args(vars(args))
-        config = ConfigParser.merge_configs(cli_config, config)
-        
-        # Add model args if provided
-        if args.model_args:
-            model_args = parse_args_string(args.model_args)
-            config["model_config"] = ConfigParser.merge_configs(
-                config.get("model_config", {}),
-                model_args
+        # Load or create configuration
+        if args.config:
+            config = ConfigParser.from_yaml(args.config)
+            # Merge CLI arguments
+            cli_args = vars(args)
+            config = ConfigParser.merge_cli_args(config, cli_args)
+        else:
+            # Create config from CLI arguments
+            if not all([args.input, args.output, (args.model_url or args.model_urls)]):
+                logger.error(
+                    "Either provide a config file or specify --input, --output, and --model-url"
+                )
+                return 1
+            
+            config = ConfigParser.create_default_config(
+                input_path=str(args.input),
+                output_path=str(args.output),
+                model_url=args.model_url or args.model_urls[0],
+                **vars(args)
             )
         
-        # Set required fields from args
-        if not config.get("model_config", {}).get("model") and args.model:
-            config.setdefault("model_config", {})["model"] = args.model
-        
-        # Validate configuration
-        errors = validate_config(config)
-        if errors:
-            logger.error("Configuration validation failed:")
-            for field, messages in errors.items():
-                for msg in messages:
-                    logger.error(f"  {field}: {msg}")
-            sys.exit(1)
-        else:
-            logger.info(f"Final config: {config}")
-        
-        # Handle special commands
-        if args.dry_run:
-            logger.info("Configuration validated successfully (dry run)")
-            return
-        
-        # Set output path
-        if not args.output:
-            timestamp = Path(args.input).stem
-            args.output = f"{args.output_dir}/output_{timestamp}.parquet"
-        
-        # Validate output path
-        output_path = validate_output_path(args.output, args.overwrite)
-        
-        # Parse worker GPUs
-        if args.worker_gpus:
-            worker_gpus = parse_gpu_list(args.worker_gpus)
-            config.setdefault("parallel_config", {})["worker_gpus"] = worker_gpus
-        
-        # Parse temperature schedule
-        if args.temperature_schedule:
-            temps = [float(t) for t in args.temperature_schedule.split(",")]
-            config.setdefault("generation_config", {})["temperature_schedule"] = temps
-        
-        # Create model config
-        model_config = ModelConfig.from_dict(config.get("model_config", {}))
-
-        # Create pipeline manager
-        parallel_config = config.get("parallel_config", {})
-        if "parallel_mode" in parallel_config:
-            args.parallel_mode = parallel_config["parallel_mode"]
-        if "num_workers" in parallel_config:
-            args.parallel_workers = parallel_config["num_workers"]
-        if "ports" in parallel_config:
-            args.ports = parallel_config["ports"]
-        if "worker_gpus" in parallel_config:
-            args.worker_gpus = parallel_config["worker_gpus"]
-        manager = PipelineManager(
-            model_config=model_config,
-            generation_config=config.get("generation_config", {}),
-            parallel_mode=args.parallel_mode,
-            num_workers=args.parallel_workers or 1,
-            worker_gpus=args.worker_gpus,
-            base_port=int(args.ports) if args.ports else 8000
-        )
+        # Save config if requested
+        if args.save_config:
+            ConfigParser.to_yaml(config, args.save_config)
+            logger.info(f"Saved configuration to {args.save_config}")
         
         # Run pipeline
-        data_config = config.get("data_config", {})
-        if "question_column" in data_config:
-            args.question_column = data_config.pop("question_column")
-            logger.info(f"Question column: {args.question_column}")
-        if "output_format" in data_config:
-            args.output_format = data_config.pop("output_format")
-            logger.info(f"Output format: {args.output_format}")
-        result = manager.run(
-            input_path=args.input,
-            output_path=str(output_path),
-            question_column=args.question_column,
-            output_format=args.output_format,
-            **data_config
+        pipeline = GenerationPipeline(config)
+        results = await pipeline.run(
+            dry_run=args.dry_run,
+            progress_bar=args.progress_bar
         )
         
         # Print summary
-        logger.info("Generation completed successfully!")
-        logger.info(f"Output saved to: {result['output_path']}")
-        logger.info(f"Total samples processed: {result.get('total_samples', 0)}")
+        logger.info(f"✓ Generated {results['total_processed']} responses")
+        logger.info(f"✓ Processing time: {results['processing_time']:.2f}s")
+        logger.info(f"✓ Throughput: {results['prompts_per_second']:.2f} prompts/s")
         
-        if "metrics" in result:
-            metrics = result["metrics"]
-            logger.info(f"Metrics: {metrics}")
-        
-    except KeyboardInterrupt:
-        logger.info("Generation interrupted by user")
-        sys.exit(0)
+        return 0
+    
     except Exception as e:
-        logger.error(f"Generation failed: {e}", exc_info=True)
-        sys.exit(1)
+        logger.error(f"Generation failed: {e}")
+        return 1
+
+
+async def validate_command(args: argparse.Namespace) -> int:
+    """Execute validate command."""
+    logger = get_logger("CLI")
+    
+    try:
+        config = ConfigParser.from_yaml(args.config)
+        pipeline = GenerationPipeline(config)
+        
+        if await pipeline.validate():
+            logger.info("✓ Configuration is valid")
+            return 0
+        else:
+            logger.error("✗ Configuration validation failed")
+            return 1
+    
+    except Exception as e:
+        logger.error(f"Validation failed: {e}")
+        return 1
+
+
+async def list_models_command(args: argparse.Namespace) -> int:
+    """Execute list-models command."""
+    logger = get_logger("CLI")
+    
+    try:
+        # Determine model URLs
+        if args.config:
+            config = ConfigParser.from_yaml(args.config)
+            model_urls = [str(m.url) for m in config.models]
+        elif args.model_urls:
+            model_urls = args.model_urls
+        elif args.model_url:
+            model_urls = [args.model_url]
+        else:
+            logger.error("Provide --model-url, --model-urls, or --config")
+            return 1
+        
+        # Create minimal config
+        config_data = {
+            "data": {
+                "input_path": "dummy.parquet",
+                "output_path": "dummy_out.parquet"
+            },
+            "models": [{"url": url} for url in model_urls]
+        }
+        config = Config(**config_data)
+        
+        # List models
+        pipeline = GenerationPipeline(config)
+        model_lists = await pipeline.list_models()
+        
+        # Display results
+        for endpoint, models in model_lists.items():
+            logger.info(f"\nEndpoint: {endpoint}")
+            if models:
+                for model in models:
+                    logger.info(f"  - {model}")
+            else:
+                logger.info("  No models found")
+        
+        return 0
+    
+    except Exception as e:
+        logger.error(f"Failed to list models: {e}")
+        return 1
+
+
+async def async_main(args: argparse.Namespace) -> int:
+    """Async main function."""
+    if args.command == "generate":
+        return await generate_command(args)
+    elif args.command == "validate":
+        return await validate_command(args)
+    elif args.command == "list-models":
+        return await list_models_command(args)
+    else:
+        parser = create_parser()
+        parser.print_help()
+        return 1
+
+
+def main() -> int:
+    """Main entry point."""
+    parser = create_parser()
+    args = parser.parse_args()
+    
+    # Configure logging
+    if args.no_color:
+        import os
+        os.environ["NO_COLOR"] = "1"
+    
+    # Run async main
+    return asyncio.run(async_main(args))
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

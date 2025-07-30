@@ -1,189 +1,105 @@
+"""Model configuration and management."""
+
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
-import json
-import yaml
+import random
+
+from ..config.schemas import ModelConfig
+from ..utils import get_logger
 
 
 @dataclass
-class ModelConfig:
-    """Configuration for vLLM model"""
+class ModelEndpoint:
+    """Represents a single model endpoint."""
     
-    # Model identification
-    model: str
-    model_revision: Optional[str] = None
-    tokenizer: Optional[str] = None
-    
-    # Device and memory
-    dtype: str = "auto"
-    device: str = "cuda"
-    gpu_memory_utilization: float = 0.9
-    tensor_parallel_size: int = 1
-    max_model_len: Optional[int] = None
-    
-    # Generation parameters
-    temperature: float = 1.0
-    top_p: float = 1.0
-    top_k: int = -1
-    max_tokens: int = 512
-    min_tokens: int = 1
-    repetition_penalty: float = 1.0
-    presence_penalty: float = 0.0
-    frequency_penalty: float = 0.0
-    stop_sequences: Optional[List[str]] = None
-    seed: Optional[int] = None
-    best_of: Optional[int] = None
-    
-    # Performance settings
-    swap_space: int = 4
-    cpu_offload_gb: Optional[int] = None
-    quantization: Optional[str] = None
-    enforce_eager: bool = False
-    enable_prefix_caching: bool = False
-    max_num_seqs: Optional[int] = None
-    
-    # Additional settings
-    trust_remote_code: bool = False
-    disable_log_stats: bool = False
-    
-    @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "ModelConfig":
-        """Create config from dictionary"""
-        return cls(**config_dict)
-    
-    @classmethod
-    def from_yaml(cls, yaml_path: str) -> "ModelConfig":
-        """Load config from YAML file"""
-        with open(yaml_path, 'r') as f:
-            config_dict = yaml.safe_load(f)
-        return cls.from_dict(config_dict.get("model_config", config_dict))
-    
-    @classmethod
-    def from_json(cls, json_path: str) -> "ModelConfig":
-        """Load config from JSON file"""
-        with open(json_path, 'r') as f:
-            config_dict = json.load(f)
-        return cls.from_dict(config_dict.get("model_config", config_dict))
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
-        return {k: v for k, v in self.__dict__.items() if v is not None}
-    
-    def to_vllm_args(self) -> Dict[str, Any]:
-        """Convert to vLLM-compatible arguments"""
-        vllm_args = {
-            "model": self.model,
-            "dtype": self.dtype,
-            "gpu_memory_utilization": self.gpu_memory_utilization,
-            "tensor_parallel_size": self.tensor_parallel_size,
-            "trust_remote_code": self.trust_remote_code,
-            "swap_space": self.swap_space,
-            "disable_log_stats": self.disable_log_stats,
-        }
-        
-        if self.model_revision:
-            vllm_args["revision"] = self.model_revision
-        if self.tokenizer:
-            vllm_args["tokenizer"] = self.tokenizer
-        if self.max_model_len:
-            vllm_args["max_model_len"] = self.max_model_len
-        if self.quantization:
-            vllm_args["quantization"] = self.quantization
-        if self.cpu_offload_gb:
-            vllm_args["cpu_offload_gb"] = self.cpu_offload_gb
-        if self.enforce_eager:
-            vllm_args["enforce_eager"] = self.enforce_eager
-        if self.enable_prefix_caching:
-            vllm_args["enable_prefix_caching"] = self.enable_prefix_caching
-        if self.max_num_seqs:
-            vllm_args["max_num_seqs"] = self.max_num_seqs
-        
-        return vllm_args
-    
-    def to_sampling_params(self) -> Dict[str, Any]:
-        """Convert to vLLM SamplingParams arguments"""
-        sampling_params = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.top_k,
-            "max_tokens": self.max_tokens,
-            "min_tokens": self.min_tokens,
-            "repetition_penalty": self.repetition_penalty,
-            "presence_penalty": self.presence_penalty,
-            "frequency_penalty": self.frequency_penalty,
-        }
-        
-        if self.stop_sequences:
-            sampling_params["stop"] = self.stop_sequences
-        if self.seed is not None:
-            sampling_params["seed"] = self.seed
-        if self.best_of:
-            sampling_params["best_of"] = self.best_of
-        
-        return sampling_params
-    
-    def update(self, **kwargs):
-        """Update config with new values"""
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            else:
-                raise ValueError(f"Unknown config parameter: {key}")
-    
-    def validate(self):
-        """Validate configuration"""
-        if not self.model:
-            raise ValueError("Model name is required")
-        
-        if self.gpu_memory_utilization <= 0 or self.gpu_memory_utilization > 1:
-            raise ValueError("gpu_memory_utilization must be between 0 and 1")
-        
-        if self.temperature < 0:
-            raise ValueError("temperature must be non-negative")
-        
-        if self.top_p <= 0 or self.top_p > 1:
-            raise ValueError("top_p must be between 0 and 1")
-        
-        if self.max_tokens <= 0:
-            raise ValueError("max_tokens must be positive")
-        
-        if self.tensor_parallel_size < 1:
-            raise ValueError("tensor_parallel_size must be at least 1")
+    url: str
+    name: str
+    api_key: Optional[str] = None
+    headers: Optional[Dict[str, str]] = None
+    weight: float = 1.0
+    is_healthy: bool = True
+    request_count: int = 0
+    error_count: int = 0
 
 
-@dataclass
-class GenerationConfig:
-    """Configuration for generation process"""
+class ModelManager:
+    """Manage multiple model endpoints with load balancing."""
     
-    # Batch processing
-    batch_size: int = 32
-    prefetch_batches: int = 2
+    def __init__(self, model_configs: List[ModelConfig]):
+        """Initialize model manager."""
+        self.logger = get_logger("ModelManager")
+        self.endpoints = []
+        
+        for config in model_configs:
+            endpoint = ModelEndpoint(
+                url=str(config.url),
+                name=config.name or str(config.url),
+                api_key=config.api_key,
+                headers=config.headers
+            )
+            self.endpoints.append(endpoint)
+        
+        self.logger.info(f"Initialized with {len(self.endpoints)} endpoints")
     
-    # Repeat generation
-    num_repeats: int = 1
-    repeat_strategy: str = "independent"  # independent, temperature_schedule, diverse
-    temperature_schedule: Optional[List[float]] = None
-    seed_increment: int = 1
-    repeat_order: str = "item_first"  # item_first (AAAA BBBB) or batch_first (ABCD ABCD)
+    def get_endpoint(self, strategy: str = "round_robin") -> ModelEndpoint:
+        """Get next endpoint based on strategy."""
+        healthy_endpoints = [ep for ep in self.endpoints if ep.is_healthy]
+        
+        if not healthy_endpoints:
+            self.logger.warning("No healthy endpoints available, using all endpoints")
+            healthy_endpoints = self.endpoints
+        
+        if strategy == "round_robin":
+            # Simple round-robin based on request count
+            endpoint = min(healthy_endpoints, key=lambda x: x.request_count)
+        elif strategy == "random":
+            endpoint = random.choice(healthy_endpoints)
+        elif strategy == "weighted":
+            # Weighted random selection
+            weights = [ep.weight for ep in healthy_endpoints]
+            endpoint = random.choices(healthy_endpoints, weights=weights)[0]
+        else:
+            endpoint = healthy_endpoints[0]
+        
+        endpoint.request_count += 1
+        return endpoint
     
-    # Output settings
-    aggregate_responses: bool = False
-    aggregation_method: str = "first"  # first, longest, majority_vote
+    def mark_unhealthy(self, endpoint: ModelEndpoint) -> None:
+        """Mark endpoint as unhealthy."""
+        endpoint.is_healthy = False
+        endpoint.error_count += 1
+        self.logger.warning(f"Marked endpoint {endpoint.name} as unhealthy")
     
-    # Processing limits
-    max_samples: Optional[int] = None
-    start_index: Optional[int] = None
-    end_index: Optional[int] = None
+    def mark_healthy(self, endpoint: ModelEndpoint) -> None:
+        """Mark endpoint as healthy."""
+        endpoint.is_healthy = True
+        self.logger.info(f"Marked endpoint {endpoint.name} as healthy")
     
-    # Checkpointing
-    checkpoint_frequency: int = 100
-    resume_from_checkpoint: Optional[str] = None
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get statistics for all endpoints."""
+        stats = {
+            "total_endpoints": len(self.endpoints),
+            "healthy_endpoints": sum(1 for ep in self.endpoints if ep.is_healthy),
+            "total_requests": sum(ep.request_count for ep in self.endpoints),
+            "total_errors": sum(ep.error_count for ep in self.endpoints),
+            "endpoints": []
+        }
+        
+        for endpoint in self.endpoints:
+            stats["endpoints"].append({
+                "name": endpoint.name,
+                "url": endpoint.url,
+                "is_healthy": endpoint.is_healthy,
+                "request_count": endpoint.request_count,
+                "error_count": endpoint.error_count,
+                "error_rate": endpoint.error_count / max(endpoint.request_count, 1)
+            })
+        
+        return stats
     
-    # Error handling
-    error_handling: str = "skip"  # skip, retry, fail
-    max_retries: int = 3
-    timeout_per_request: Optional[float] = None
-    
-    @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> "GenerationConfig":
-        """Create config from dictionary"""
-        return cls(**config_dict)
+    def reset_statistics(self) -> None:
+        """Reset request and error counts."""
+        for endpoint in self.endpoints:
+            endpoint.request_count = 0
+            endpoint.error_count = 0
+        self.logger.info("Reset endpoint statistics")

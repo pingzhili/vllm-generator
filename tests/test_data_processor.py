@@ -1,217 +1,180 @@
-import json
+"""Tests for data processor."""
 
-from vllm_generator import DataProcessor
+import pytest
+import pandas as pd
+
+from vllm_generator.data import DataProcessor
 
 
 class TestDataProcessor:
+    """Test data processor functionality."""
     
-    def test_basic_processing(self, sample_dataframe):
-        """Test basic data processing"""
+    def test_prepare_prompts_no_template(self):
+        """Test preparing prompts without template."""
         processor = DataProcessor()
-        items = processor.process_batch(sample_dataframe, question_column="question")
+        texts = ["Q1", "Q2", "Q3"]
         
-        assert len(items) == len(sample_dataframe)
-        assert all("prompt" in item for item in items)
-        assert all("original_question" in item for item in items)
-        assert items[0]["prompt"] == sample_dataframe.iloc[0]["question"]
+        prompts = processor.prepare_prompts(texts)
+        assert prompts == texts
     
-    def test_prompt_template(self, sample_dataframe):
-        """Test custom prompt template"""
-        processor = DataProcessor(
-            prompt_template="Question: {question}\nAnswer:"
-        )
-        items = processor.process_batch(sample_dataframe)
+    def test_prepare_prompts_with_template(self):
+        """Test preparing prompts with template."""
+        processor = DataProcessor()
+        texts = ["Q1", "Q2"]
+        template = "Question: {text}\nAnswer:"
         
-        expected = f"Question: {sample_dataframe.iloc[0]['question']}\nAnswer:"
-        assert items[0]["prompt"] == expected
+        prompts = processor.prepare_prompts(texts, prompt_template=template)
+        
+        assert prompts[0] == "Question: Q1\nAnswer:"
+        assert prompts[1] == "Question: Q2\nAnswer:"
     
-    def test_use_chat_template(self, sample_dataframe):
-        """Test use_chat_template with mock tokenizer"""
-        # Create a mock tokenizer
-        class MockTokenizer:
-            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
-                formatted = []
-                for msg in messages:
-                    formatted.append(f"{msg['role']}: {msg['content']}")
-                result = "\n".join(formatted)
-                if add_generation_prompt:
-                    result += "\nAssistant:"
-                return result
+    def test_prepare_prompts_with_system(self):
+        """Test preparing prompts with system prompt."""
+        processor = DataProcessor()
+        texts = ["Q1"]
+        template = "Q: {text}"
+        system = "You are a helpful assistant."
         
-        processor = DataProcessor(
-            system_prompt="You are a helpful assistant.",
-            use_chat_template=True,
-            tokenizer=MockTokenizer()
-        )
-        items = processor.process_batch(sample_dataframe)
-        
-        prompt = items[0]["prompt"]
-        assert "system: You are a helpful assistant." in prompt
-        assert "user:" in prompt
-        assert "Assistant:" in prompt
-    
-    def test_without_chat_template(self, sample_dataframe):
-        """Test processing without chat template"""
-        processor = DataProcessor(
-            prompt_template="Q: {question}\nA:",
-            use_chat_template=False
-        )
-        items = processor.process_batch(sample_dataframe.head(1))
-        
-        expected = f"Q: {sample_dataframe.iloc[0]['question']}\nA:"
-        assert items[0]["prompt"] == expected
-    
-    def test_set_tokenizer(self, sample_dataframe):
-        """Test setting tokenizer after initialization"""
-        processor = DataProcessor(
-            use_chat_template=True
+        prompts = processor.prepare_prompts(
+            texts,
+            prompt_template=template,
+            system_prompt=system
         )
         
-        # Initially no tokenizer
-        assert processor.tokenizer is None
-        
-        # Set tokenizer
-        class MockTokenizer:
-            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
-                return "Mocked chat template output"
-        
-        processor.set_tokenizer(MockTokenizer())
-        assert processor.tokenizer is not None
-        
-        items = processor.process_batch(sample_dataframe.head(1))
-        assert items[0]["prompt"] == "Mocked chat template output"
+        assert prompts[0] == "You are a helpful assistant.\n\nQ: Q1"
     
-    def test_few_shot_examples(self, sample_dataframe, temp_dir):
-        """Test few-shot examples with chat template"""
-        # Create few-shot examples file
-        examples = [
-            {"question": "What is 2+2?", "answer": "4"},
-            {"question": "What color is the sky?", "answer": "Blue"}
+    def test_process_responses_dict(self, mock_vllm_response):
+        """Test processing dictionary responses."""
+        processor = DataProcessor()
+        responses = [mock_vllm_response, mock_vllm_response]
+        
+        texts = processor.process_responses(responses)
+        
+        assert len(texts) == 2
+        assert texts[0] == "This is a test response"
+        assert texts[1] == "This is a test response"
+    
+    def test_process_responses_string(self):
+        """Test processing string responses."""
+        processor = DataProcessor()
+        responses = ["Response 1", "Response 2"]
+        
+        texts = processor.process_responses(responses)
+        
+        assert texts == ["Response 1", "Response 2"]
+    
+    def test_process_responses_mixed(self, mock_vllm_response):
+        """Test processing mixed response types."""
+        processor = DataProcessor()
+        responses = [
+            mock_vllm_response,
+            "Direct string response",
+            {"text": "Simple dict response"}
         ]
-        examples_file = temp_dir / "examples.json"
-        with open(examples_file, 'w') as f:
-            json.dump(examples, f)
         
-        # Create mock tokenizer
-        class MockTokenizer:
-            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
-                formatted = []
-                for msg in messages:
-                    formatted.append(f"{msg['role']}: {msg['content']}")
-                result = "\n".join(formatted)
-                if add_generation_prompt:
-                    result += "\nAssistant:"
-                return result
+        texts = processor.process_responses(responses)
         
-        # Load and use examples
-        few_shot = DataProcessor.load_few_shot_examples(str(examples_file))
-        processor = DataProcessor(
-            few_shot_examples=few_shot,
-            use_chat_template=True,
-            tokenizer=MockTokenizer()
-        )
-        
-        items = processor.process_batch(sample_dataframe.head(1))
-        prompt = items[0]["prompt"]
-        
-        # Check few-shot examples are included
-        assert "user: What is 2+2?" in prompt
-        assert "assistant: 4" in prompt
-        assert "user: What color is the sky?" in prompt
-        assert "assistant: Blue" in prompt
+        assert texts[0] == "This is a test response"
+        assert texts[1] == "Direct string response"
+        assert texts[2] == "Simple dict response"
     
-    def test_special_tokens(self, sample_dataframe):
-        """Test adding special tokens without chat template"""
-        processor = DataProcessor(
-            add_bos_token=True,
-            add_eos_token=True,
-            use_chat_template=False
-        )
-        items = processor.process_batch(sample_dataframe.head(1))
-        
-        prompt = items[0]["prompt"]
-        assert prompt.startswith("<s>")
-        assert prompt.endswith("</s>")
-    
-    def test_special_tokens_with_chat_template(self, sample_dataframe):
-        """Test that special tokens are not added when using chat template"""
-        class MockTokenizer:
-            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
-                return "Chat template output"
-        
-        processor = DataProcessor(
-            add_bos_token=True,
-            add_eos_token=True,
-            use_chat_template=True,
-            tokenizer=MockTokenizer()
-        )
-        items = processor.process_batch(sample_dataframe.head(1))
-        
-        # Special tokens should not be added when using chat template
-        prompt = items[0]["prompt"]
-        assert prompt == "Chat template output"
-        assert not prompt.startswith("<s>")
-        assert not prompt.endswith("</s>")
-    
-    def test_metadata_columns(self, sample_dataframe):
-        """Test including metadata columns"""
+    def test_group_responses_by_input(self):
+        """Test grouping responses by input."""
         processor = DataProcessor()
-        items = processor.process_batch(
-            sample_dataframe,
-            metadata_columns=["category", "difficulty"]
-        )
         
-        assert "category" in items[0]
-        assert "difficulty" in items[0]
-        assert items[0]["category"] == "Geography"
-        assert items[0]["difficulty"] == "Easy"
+        # Single sample per input
+        responses = ["R1", "R2", "R3"]
+        grouped = processor.group_responses_by_input(responses, num_samples=1)
+        assert grouped == [["R1"], ["R2"], ["R3"]]
+        
+        # Multiple samples per input
+        responses = ["R1a", "R1b", "R1c", "R2a", "R2b", "R2c"]
+        grouped = processor.group_responses_by_input(responses, num_samples=3)
+        assert grouped == [["R1a", "R1b", "R1c"], ["R2a", "R2b", "R2c"]]
     
-    def test_create_repeat_prompts(self):
-        """Test creating prompts for repeat generation"""
+    def test_flatten_responses(self):
+        """Test flattening grouped responses."""
         processor = DataProcessor()
-        question = "What is AI?"
+        grouped = [["R1a", "R1b"], ["R2a", "R2b"], ["R3a", "R3b"]]
         
-        # Independent strategy
-        prompts = processor.create_repeat_prompts(
-            question, 
-            num_repeats=3,
-            repeat_strategy="independent"
-        )
-        assert len(prompts) == 3
-        assert all(p["prompt"] == question for p in prompts)
+        flattened = processor.flatten_responses(grouped)
         
-        # Temperature schedule strategy
-        prompts = processor.create_repeat_prompts(
-            question,
-            num_repeats=3,
-            repeat_strategy="temperature_schedule",
-            temperature_schedule=[0.5, 1.0, 1.5]
-        )
-        assert len(prompts) == 3
-        assert prompts[0]["temperature"] == 0.5
-        assert prompts[1]["temperature"] == 1.0
-        assert prompts[2]["temperature"] == 1.5
-        
-        # Diverse strategy
-        prompts = processor.create_repeat_prompts(
-            question,
-            num_repeats=3,
-            repeat_strategy="diverse"
-        )
-        assert len(prompts) == 3
-        assert all("Variation" in p["prompt"] for p in prompts)
+        assert flattened == ["R1a", "R1b", "R2a", "R2b", "R3a", "R3b"]
     
-    def test_preprocessing_function(self, sample_dataframe, temp_dir):
-        """Test custom preprocessing function"""
-        # Create preprocessing function file
-        preprocess_file = temp_dir / "preprocess.py"
-        with open(preprocess_file, 'w') as f:
-            f.write("""
-def preprocess(question, row):
-    return f"[{row['category']}] {question}"
-""")
+    def test_create_response_dataframe_single(self):
+        """Test creating response dataframe with single responses."""
+        processor = DataProcessor()
         
-        processor = DataProcessor(preprocessing_fn=str(preprocess_file))
-        items = processor.process_batch(sample_dataframe.head(1))
+        input_df = pd.DataFrame({
+            "question": ["Q1", "Q2", "Q3"],
+            "id": [1, 2, 3]
+        })
         
-        assert items[0]["prompt"] == "[Geography] What is the capital of France?"
+        responses = ["R1", "R2", "R3"]
+        
+        output_df = processor.create_response_dataframe(
+            input_df,
+            responses,
+            "question",
+            "response"
+        )
+        
+        assert len(output_df) == 3
+        assert output_df["response"].tolist() == ["R1", "R2", "R3"]
+        assert output_df["id"].tolist() == [1, 2, 3]
+    
+    def test_create_response_dataframe_multiple(self):
+        """Test creating response dataframe with multiple responses."""
+        processor = DataProcessor()
+        
+        input_df = pd.DataFrame({
+            "question": ["Q1", "Q2"],
+            "id": [1, 2]
+        })
+        
+        responses = [["R1a", "R1b"], ["R2a", "R2b", "R2c"]]
+        
+        output_df = processor.create_response_dataframe(
+            input_df,
+            responses,
+            "question",
+            "response"
+        )
+        
+        assert len(output_df) == 5  # 2 + 3 responses
+        assert output_df["response"].tolist() == ["R1a", "R1b", "R2a", "R2b", "R2c"]
+        assert output_df["sample_idx"].tolist() == [0, 1, 0, 1, 2]
+    
+    def test_validate_responses(self):
+        """Test response validation."""
+        processor = DataProcessor()
+        
+        # Valid count
+        assert processor.validate_responses(["R1", "R2", "R3"], expected_count=3)
+        
+        # Invalid count
+        assert not processor.validate_responses(["R1", "R2"], expected_count=3)
+    
+    def test_clean_text(self):
+        """Test text cleaning."""
+        processor = DataProcessor()
+        
+        text = "  This   has    extra   spaces  \n\n  and newlines  "
+        cleaned = processor.clean_text(text)
+        
+        assert cleaned == "This has extra spaces and newlines"
+    
+    def test_truncate_responses(self):
+        """Test response truncation."""
+        processor = DataProcessor()
+        
+        responses = [
+            "Short response",
+            "This is a very long response that exceeds the maximum length limit"
+        ]
+        
+        truncated = processor.truncate_responses(responses, max_length=20)
+        
+        assert truncated[0] == "Short response"
+        assert truncated[1] == "This is a very long "
+        assert len(truncated[1]) == 20

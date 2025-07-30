@@ -1,113 +1,171 @@
+"""Tests for data loader."""
+
 import pytest
 import pandas as pd
 from pathlib import Path
 
-from vllm_generator import DataLoader
+from vllm_generator.data import DataLoader
+from vllm_generator.config.schemas import DataConfig
 
 
 class TestDataLoader:
+    """Test data loader functionality."""
     
-    def test_load_parquet(self, sample_parquet_file):
-        """Test loading a parquet file"""
-        loader = DataLoader(sample_parquet_file, question_column="question")
+    def test_load_basic(self, sample_parquet_file):
+        """Test basic data loading."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            input_column="question",
+            output_column="response"
+        )
+        
+        loader = DataLoader(config)
         df = loader.load()
         
-        assert isinstance(df, pd.DataFrame)
         assert len(df) == 5
         assert "question" in df.columns
-        assert loader.total_rows == 5
+        assert df["question"].iloc[0] == "What is the capital of France?"
     
-    def test_validate_columns(self, sample_parquet_file):
-        """Test column validation"""
-        # Valid column
-        loader = DataLoader(sample_parquet_file, question_column="question")
-        df = loader.load()
-        assert df is not None
+    def test_load_nonexistent_file(self, temp_dir):
+        """Test loading non-existent file."""
+        config = DataConfig(
+            input_path=temp_dir / "nonexistent.parquet",
+            output_path=Path("output.parquet")
+        )
         
-        # Invalid column
-        loader = DataLoader(sample_parquet_file, question_column="invalid_column")
-        with pytest.raises(ValueError, match="Question column 'invalid_column' not found"):
+        loader = DataLoader(config)
+        with pytest.raises(FileNotFoundError):
             loader.load()
     
-    def test_load_subset(self, sample_parquet_file):
-        """Test loading subset of data"""
-        loader = DataLoader(sample_parquet_file)
-        
-        # Test with max_samples
-        df = loader.load_subset(max_samples=3)
-        assert len(df) == 3
-        
-        # Test with start/end index
-        df = loader.load_subset(start_index=1, end_index=4)
-        assert len(df) == 3
-        
-        # Test with filter
-        df = loader.load_subset(filter_column="category", filter_value="AI")
-        assert len(df) == 1
-        assert df.iloc[0]["category"] == "AI"
-    
-    def test_create_shards(self, sample_parquet_file, temp_dir):
-        """Test creating data shards"""
-        loader = DataLoader(sample_parquet_file)
-        
-        # Test contiguous sharding
-        shards = loader.create_shards(num_shards=2, strategy="contiguous")
-        assert len(shards) == 2
-        assert shards[0]["num_rows"] + shards[1]["num_rows"] == 5
-        
-        # Test with output directory
-        shard_dir = temp_dir / "shards"
-        shards = loader.create_shards(
-            num_shards=2, 
-            output_dir=str(shard_dir),
-            strategy="contiguous"
-        )
-        assert len(shards) == 2
-        assert Path(shards[0]["path"]).exists()
-        assert Path(shards[1]["path"]).exists()
-    
-    def test_estimate_tokens(self, sample_dataframe):
-        """Test token estimation"""
-        loader = DataLoader("dummy.parquet")
-        tokens = loader.estimate_tokens(sample_dataframe)
-        
-        assert len(tokens) == len(sample_dataframe)
-        assert all(t > 0 for t in tokens)
-    
-    def test_merge_shards(self, temp_dir, sample_dataframe):
-        """Test merging shard files"""
-        # Create shard files
-        shard1_path = temp_dir / "shard1.parquet"
-        shard2_path = temp_dir / "shard2.parquet"
-        
-        sample_dataframe.iloc[:3].to_parquet(shard1_path)
-        sample_dataframe.iloc[3:].to_parquet(shard2_path)
-        
-        # Merge shards
-        output_path = temp_dir / "merged.parquet"
-        merged_df = DataLoader.merge_shards(
-            [str(shard1_path), str(shard2_path)],
-            str(output_path)
+    def test_load_with_filter(self, sample_parquet_file):
+        """Test loading with filter condition."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            filter_condition="category == 'ai'"
         )
         
-        assert len(merged_df) == len(sample_dataframe)
-        assert output_path.exists()
-    
-    def test_round_robin_sharding(self, sample_parquet_file):
-        """Test round-robin sharding strategy"""
-        loader = DataLoader(sample_parquet_file)
-        shards = loader.create_shards(num_shards=2, strategy="round_robin")
+        loader = DataLoader(config)
+        df = loader.load()
         
-        assert len(shards) == 2
-        # Round-robin should distribute evenly
-        assert abs(shards[0]["num_rows"] - shards[1]["num_rows"]) <= 1
+        assert len(df) == 2
+        assert all(df["category"] == "ai")
     
-    def test_balanced_sharding(self, sample_parquet_file):
-        """Test balanced sharding strategy"""
-        loader = DataLoader(sample_parquet_file)
-        shards = loader.create_shards(num_shards=2, strategy="balanced")
+    def test_load_with_limit(self, sample_parquet_file):
+        """Test loading with row limit."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            limit=3
+        )
         
-        assert len(shards) == 2
-        # Check that all rows are accounted for
-        total_rows = sum(s["num_rows"] for s in shards)
-        assert total_rows == 5
+        loader = DataLoader(config)
+        df = loader.load()
+        
+        assert len(df) == 3
+    
+    def test_load_with_shuffle(self, sample_parquet_file):
+        """Test loading with shuffle."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            shuffle=True
+        )
+        
+        loader = DataLoader(config)
+        df1 = loader.load()
+        df2 = loader.load()
+        
+        # With shuffle, order should be different (with high probability)
+        # We can't guarantee they're different, but we can check they're valid
+        assert len(df1) == 5
+        assert len(df2) == 5
+        assert set(df1["id"].values) == set(df2["id"].values)
+    
+    def test_validate_columns(self, sample_parquet_file):
+        """Test column validation."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            input_column="question",
+            copy_columns=["id", "category"]
+        )
+        
+        loader = DataLoader(config)
+        df = loader.load()
+        
+        # Should pass
+        loader.validate_columns(df)
+        
+        # Test with missing column
+        config.input_column = "missing_column"
+        loader = DataLoader(config)
+        with pytest.raises(ValueError, match="Missing columns"):
+            loader.validate_columns(df)
+    
+    def test_load_chunks(self, sample_parquet_file):
+        """Test loading data in chunks."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet")
+        )
+        
+        loader = DataLoader(config)
+        chunks = list(loader.load_chunks(chunk_size=2))
+        
+        assert len(chunks) == 3  # 5 rows with chunk size 2
+        assert len(chunks[0]) == 2
+        assert len(chunks[1]) == 2
+        assert len(chunks[2]) == 1
+    
+    def test_get_input_texts(self, sample_parquet_file):
+        """Test extracting input texts."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            input_column="question"
+        )
+        
+        loader = DataLoader(config)
+        df = loader.load()
+        texts = loader.get_input_texts(df)
+        
+        assert len(texts) == 5
+        assert texts[0] == "What is the capital of France?"
+        assert all(isinstance(text, str) for text in texts)
+    
+    def test_prepare_output_dataframe(self, sample_parquet_file):
+        """Test preparing output dataframe."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet"),
+            input_column="question",
+            output_column="response",
+            copy_columns=["id", "category"]
+        )
+        
+        loader = DataLoader(config)
+        df = loader.load()
+        output_df = loader.prepare_output_dataframe(df)
+        
+        assert "question" in output_df.columns
+        assert "response" in output_df.columns
+        assert "id" in output_df.columns
+        assert "category" in output_df.columns
+        assert output_df["response"].isna().all()  # Should be None initially
+    
+    def test_load_schema(self, sample_parquet_file):
+        """Test loading parquet schema."""
+        config = DataConfig(
+            input_path=sample_parquet_file,
+            output_path=Path("output.parquet")
+        )
+        
+        loader = DataLoader(config)
+        schema = loader.load_schema()
+        
+        assert "question" in schema
+        assert "id" in schema
+        assert "category" in schema
+        assert "difficulty" in schema

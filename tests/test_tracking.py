@@ -1,283 +1,230 @@
+"""Tests for tracking and metrics."""
+
 import pytest
 import time
-import json
+from datetime import datetime
 
-from vllm_generator import GenerationTracker, DistributedTracker
-from vllm_generator import MetricsCollector, TokenMetrics
-
-
-class TestGenerationTracker:
-    
-    def test_tracker_initialization(self, temp_dir):
-        """Test tracker initialization"""
-        tracker = GenerationTracker(output_dir=temp_dir)
-        
-        assert tracker.output_dir == temp_dir
-        assert tracker.completed_items == 0
-        assert tracker.total_items == 0
-        assert tracker.metrics == {}
-    
-    def test_tracker_start_stop(self, temp_dir):
-        """Test starting and stopping tracker"""
-        tracker = GenerationTracker(output_dir=temp_dir, save_interval=1)
-        
-        tracker.start(total_items=100)
-        assert tracker.total_items == 100
-        assert tracker.start_time is not None
-        
-        # Update progress
-        tracker.update_progress(50)
-        assert tracker.completed_items == 50
-        
-        # Stop tracker
-        tracker.stop()
-        assert tracker.end_time is not None
-        assert tracker.end_time > tracker.start_time
-    
-    def test_tracker_save_load_state(self, temp_dir):
-        """Test saving and loading tracker state"""
-        tracker = GenerationTracker(output_dir=temp_dir)
-        
-        tracker.start(total_items=100)
-        tracker.update_progress(50)
-        tracker.update_metrics({"tokens_per_second": 150})
-        
-        # Save state
-        tracker.save_state()
-        
-        # Load state
-        state = tracker.load_state()
-        assert state["completed_items"] == 50
-        assert state["total_items"] == 100
-        assert state["metrics"]["tokens_per_second"] == 150
-        assert "timestamp" in state
-    
-    def test_tracker_paths(self, temp_dir):
-        """Test tracker path generation"""
-        tracker = GenerationTracker(output_dir=temp_dir)
-        
-        output_path = tracker.get_output_path()
-        assert output_path.startswith(str(temp_dir))
-        assert output_path.endswith(".parquet")
-        
-        metadata_path = tracker.get_metadata_path()
-        assert metadata_path == str(temp_dir / "generation_metadata.json")
-        
-        checkpoint_path = tracker.get_checkpoint_path()
-        assert checkpoint_path == str(temp_dir / "checkpoint.json")
-    
-    def test_save_final_metrics(self, temp_dir):
-        """Test saving final metrics"""
-        tracker = GenerationTracker(output_dir=temp_dir)
-        
-        metrics = {
-            "total_tokens": 10000,
-            "total_time": 100,
-            "tokens_per_second": 100
-        }
-        tracker.update_metrics(metrics)
-        tracker.save_final_metrics()
-        
-        metrics_file = temp_dir / "final_metrics.json"
-        assert metrics_file.exists()
-        
-        with open(metrics_file) as f:
-            saved_metrics = json.load(f)
-        assert saved_metrics == metrics
+from vllm_generator.tracking import (
+    MetricsCollector,
+    RequestMetrics,
+    BatchMetrics,
+    ExecutionTracker
+)
 
 
-class TestDistributedTracker:
+class TestRequestMetrics:
+    """Test RequestMetrics functionality."""
     
-    def test_distributed_tracker_init(self, temp_dir):
-        """Test distributed tracker initialization"""
-        tracker = DistributedTracker(num_workers=4, output_dir=temp_dir)
+    def test_request_metrics_creation(self):
+        """Test creating request metrics."""
+        metrics = RequestMetrics(
+            prompt_length=100,
+            response_length=50,
+            latency=1.5,
+            success=True,
+            model_endpoint="test_endpoint"
+        )
         
-        assert tracker.num_workers == 4
-        assert len(tracker.worker_progress) == 4
-        assert all(p == 0 for p in tracker.worker_progress)
-        assert len(tracker.worker_metrics) == 4
+        assert metrics.prompt_length == 100
+        assert metrics.response_length == 50
+        assert metrics.latency == 1.5
+        assert metrics.success is True
+        assert metrics.error is None
+        assert metrics.model_endpoint == "test_endpoint"
+        assert isinstance(metrics.timestamp, datetime)
+
+
+class TestBatchMetrics:
+    """Test BatchMetrics functionality."""
     
-    def test_update_worker_progress(self, temp_dir):
-        """Test updating worker progress"""
-        tracker = DistributedTracker(num_workers=4, output_dir=temp_dir)
-        tracker.start(total_items=100)
+    def test_batch_metrics_properties(self):
+        """Test batch metrics calculated properties."""
+        start = datetime.now()
+        end = datetime.fromtimestamp(start.timestamp() + 10)  # 10 seconds later
         
-        # Update individual workers
-        tracker.update_worker_progress(0, 10)
-        tracker.update_worker_progress(1, 15)
-        tracker.update_worker_progress(2, 20)
-        tracker.update_worker_progress(3, 5)
+        metrics = BatchMetrics(
+            batch_id=1,
+            batch_size=100,
+            successful_requests=95,
+            failed_requests=5,
+            total_latency=150.0,
+            start_time=start,
+            end_time=end
+        )
         
-        assert tracker.worker_progress == [10, 15, 20, 5]
-        assert tracker.completed_items == 50
+        assert metrics.success_rate == 0.95
+        assert metrics.average_latency == 1.5
+        assert abs(metrics.throughput - 10.0) < 0.1  # ~10 requests/second
     
-    def test_update_worker_metrics(self, temp_dir):
-        """Test updating worker metrics"""
-        tracker = DistributedTracker(num_workers=2, output_dir=temp_dir)
+    def test_batch_metrics_edge_cases(self):
+        """Test batch metrics edge cases."""
+        start = datetime.now()
         
-        tracker.update_worker_metrics(0, {"tokens": 100, "time": 10})
-        tracker.update_worker_metrics(1, {"tokens": 150, "time": 15})
+        # All failed
+        metrics = BatchMetrics(
+            batch_id=1,
+            batch_size=10,
+            successful_requests=0,
+            failed_requests=10,
+            total_latency=0,
+            start_time=start,
+            end_time=start  # Same time
+        )
         
-        # Check aggregated metrics
-        assert tracker.metrics["tokens"] == 250
-        assert tracker.metrics["time"] == 25
-    
-    def test_worker_summary(self, temp_dir):
-        """Test getting worker summary"""
-        tracker = DistributedTracker(num_workers=3, output_dir=temp_dir)
-        
-        tracker.update_worker_progress(0, 10)
-        tracker.update_worker_progress(1, 20)
-        tracker.update_worker_progress(2, 15)
-        
-        tracker.update_worker_metrics(0, {"tokens": 100})
-        tracker.update_worker_metrics(1, {"tokens": 200})
-        tracker.update_worker_metrics(2, {"tokens": 150})
-        
-        summary = tracker.get_worker_summary()
-        
-        assert summary["num_workers"] == 3
-        assert summary["worker_progress"] == [10, 20, 15]
-        assert summary["total_progress"] == 45
-        assert len(summary["worker_metrics"]) == 3
+        assert metrics.success_rate == 0.0
+        assert metrics.average_latency == 0.0
+        assert metrics.throughput == 0.0  # Division by zero handled
 
 
 class TestMetricsCollector:
+    """Test MetricsCollector functionality."""
     
-    def test_metrics_collector_basic(self):
-        """Test basic metrics collection"""
+    def test_record_and_summarize_requests(self):
+        """Test recording and summarizing request metrics."""
         collector = MetricsCollector()
         
-        # Record some metrics
-        collector.record("tokens", 100)
-        collector.record("tokens", 150)
-        collector.record("tokens", 200)
-        
-        collector.record("latency", 0.1)
-        collector.record("latency", 0.15)
-        collector.record("latency", 0.2)
+        # Record some requests
+        for i in range(10):
+            metrics = RequestMetrics(
+                prompt_length=100 + i,
+                response_length=50 + i,
+                latency=1.0 + i * 0.1,
+                success=i < 8,  # 8 successful, 2 failed
+                error="Error" if i >= 8 else None
+            )
+            collector.record_request(metrics)
         
         summary = collector.get_summary()
         
-        assert summary["tokens"]["count"] == 3
-        assert summary["tokens"]["sum"] == 450
-        assert summary["tokens"]["mean"] == 150
-        assert summary["tokens"]["min"] == 100
-        assert summary["tokens"]["max"] == 200
-        
-        assert summary["latency"]["count"] == 3
-        assert summary["latency"]["mean"] == pytest.approx(0.15, rel=1e-3)
+        assert summary["total_requests"] == 10
+        assert summary["successful_requests"] == 8
+        assert summary["failed_requests"] == 2
+        assert summary["success_rate"] == 0.8
+        assert 1.4 < summary["average_latency"] < 1.5
+        assert summary["p50_latency"] > 0
+        assert summary["p95_latency"] > summary["p50_latency"]
     
-    def test_metrics_collector_timers(self):
-        """Test timer functionality"""
+    def test_empty_collector_summary(self):
+        """Test summary with no data."""
+        collector = MetricsCollector()
+        summary = collector.get_summary()
+        
+        assert summary["total_requests"] == 0
+        assert summary["success_rate"] == 0.0
+        assert summary["average_latency"] == 0.0
+    
+    def test_batch_summary(self):
+        """Test batch metrics summary."""
         collector = MetricsCollector()
         
-        collector.start_timer("generation")
-        time.sleep(0.1)
-        duration = collector.stop_timer("generation")
+        # Record some batches
+        start = datetime.now()
+        for i in range(3):
+            end = datetime.fromtimestamp(start.timestamp() + 10)
+            metrics = BatchMetrics(
+                batch_id=i,
+                batch_size=100,
+                successful_requests=90 + i,
+                failed_requests=10 - i,
+                total_latency=100.0,
+                start_time=start,
+                end_time=end
+            )
+            collector.record_batch(metrics)
         
-        assert duration >= 0.1
-        assert "generation_time" in collector.metrics
-        assert collector.metrics["generation_time"][0] >= 0.1
+        summary = collector.get_batch_summary()
+        
+        assert summary["total_batches"] == 3
+        assert summary["average_batch_size"] == 100
+        assert 0.9 < summary["average_success_rate"] < 0.95
     
-    def test_record_batch(self):
-        """Test batch recording"""
+    def test_endpoint_summary(self):
+        """Test endpoint-specific summary."""
         collector = MetricsCollector()
         
-        metrics_dict = {
-            "tokens": 100,
-            "latency": 0.1,
-            "temperature": 0.7
-        }
+        # Record requests for different endpoints
+        for endpoint in ["endpoint1", "endpoint2"]:
+            for i in range(5):
+                metrics = RequestMetrics(
+                    prompt_length=100,
+                    response_length=50,
+                    latency=1.0 + i * 0.1,
+                    success=True,
+                    model_endpoint=endpoint
+                )
+                collector.record_request(metrics)
         
-        collector.record_batch(metrics_dict)
+        summary = collector.get_endpoint_summary()
         
-        assert len(collector.metrics["tokens"]) == 1
-        assert len(collector.metrics["latency"]) == 1
-        assert len(collector.metrics["temperature"]) == 1
-    
-    def test_throughput_metrics(self):
-        """Test throughput calculation"""
-        collector = MetricsCollector()
+        assert len(summary) == 2
+        assert "endpoint1" in summary
+        assert "endpoint2" in summary
         
-        # Record generation data
-        for i in range(10):
-            collector.record("tokens", 100)
-            collector.record("generation_time", 0.1)
-        
-        throughput = collector.get_throughput_metrics()
-        
-        assert throughput["tokens_per_second"] == pytest.approx(1000, rel=1e-3)
-        assert throughput["items_per_second"] == pytest.approx(10, rel=1e-3)
-    
-    def test_error_metrics(self):
-        """Test error metrics"""
-        collector = MetricsCollector()
-        
-        # Record some successful generations
-        for i in range(8):
-            collector.record("generation_time", 0.1)
-        
-        # Record some errors
-        collector.record("errors", ValueError("Invalid input"))
-        collector.record("errors", TimeoutError("Timeout"))
-        
-        error_metrics = collector.get_error_metrics()
-        
-        assert error_metrics["total_errors"] == 2
-        assert error_metrics["error_rate"] == pytest.approx(0.2, rel=1e-3)
-        assert "ValueError" in error_metrics["error_types"]
-        assert "TimeoutError" in error_metrics["error_types"]
-    
-    def test_merge_collectors(self):
-        """Test merging metrics from multiple collectors"""
-        collector1 = MetricsCollector()
-        collector1.record("tokens", 100)
-        collector1.record("tokens", 150)
-        
-        collector2 = MetricsCollector()
-        collector2.record("tokens", 200)
-        collector2.record("tokens", 250)
-        
-        collector1.merge(collector2)
-        
-        assert len(collector1.metrics["tokens"]) == 4
-        assert sum(collector1.metrics["tokens"]) == 700
+        for endpoint_stats in summary.values():
+            assert endpoint_stats["total_requests"] == 5
+            assert endpoint_stats["success_rate"] == 1.0
+            assert endpoint_stats["average_latency"] > 0
 
 
-class TestTokenMetrics:
+class TestExecutionTracker:
+    """Test ExecutionTracker functionality."""
     
-    def test_token_metrics_recording(self):
-        """Test recording token usage"""
-        metrics = TokenMetrics()
+    def test_track_request_context_manager(self):
+        """Test tracking request with context manager."""
+        tracker = ExecutionTracker()
         
-        metrics.record_generation(input_tokens=50, output_tokens=100)
-        metrics.record_generation(input_tokens=60, output_tokens=120)
-        metrics.record_generation(input_tokens=70, output_tokens=140)
+        with tracker.track_request("Test prompt", model_endpoint="test") as metrics:
+            metrics.response_length = 100
+            time.sleep(0.1)  # Simulate processing
         
-        summary = metrics.get_summary()
+        summary = tracker.get_summary()
+        req_summary = summary["request_summary"]
         
-        assert summary["total_input_tokens"] == 180
-        assert summary["total_output_tokens"] == 360
-        assert summary["total_tokens"] == 540
-        assert summary["avg_input_tokens"] == 60
-        assert summary["avg_output_tokens"] == 120
-        assert summary["max_total_tokens"] == 210
+        assert req_summary["total_requests"] == 1
+        assert req_summary["successful_requests"] == 1
+        assert req_summary["average_latency"] > 0.1
     
-    def test_cost_estimation(self):
-        """Test cost estimation based on token usage"""
-        metrics = TokenMetrics()
+    def test_track_request_with_error(self):
+        """Test tracking request that fails."""
+        tracker = ExecutionTracker()
         
-        # Record some usage
-        for _ in range(10):
-            metrics.record_generation(input_tokens=1000, output_tokens=2000)
+        with pytest.raises(ValueError):
+            with tracker.track_request("Test prompt") as metrics:
+                raise ValueError("Test error")
         
-        costs = metrics.estimate_cost(
-            input_price_per_1k=0.01,
-            output_price_per_1k=0.03
-        )
+        summary = tracker.get_summary()
+        req_summary = summary["request_summary"]
         
-        assert costs["input_cost"] == pytest.approx(0.1, rel=1e-3)
-        assert costs["output_cost"] == pytest.approx(0.6, rel=1e-3)
-        assert costs["total_cost"] == pytest.approx(0.7, rel=1e-3)
-        assert costs["cost_per_generation"] == pytest.approx(0.07, rel=1e-3)
+        assert req_summary["total_requests"] == 1
+        assert req_summary["successful_requests"] == 0
+        assert req_summary["failed_requests"] == 1
+    
+    def test_batch_tracking(self):
+        """Test batch tracking methods."""
+        tracker = ExecutionTracker()
+        
+        # Track a batch
+        tracker.start_batch(batch_id=1, batch_size=10)
+        
+        # Record some successes and failures
+        tracker.record_batch_success(1, count=8)
+        tracker.record_batch_failure(1, count=2)
+        
+        # End batch
+        tracker.end_batch(1)
+        
+        summary = tracker.get_summary()
+        batch_summary = summary["batch_summary"]
+        
+        assert batch_summary["total_batches"] == 1
+        assert batch_summary["average_batch_size"] == 10
+    
+    def test_batch_tracking_invalid(self):
+        """Test ending batch that wasn't started."""
+        tracker = ExecutionTracker()
+        
+        # Should not raise error, just log warning
+        tracker.end_batch(999)
+        
+        summary = tracker.get_summary()
+        assert summary["batch_summary"]["total_batches"] == 0

@@ -1,238 +1,280 @@
 # vLLM Generator
 
-A scalable and flexible text generation framework for processing dataframes using vLLM. Designed for research and production use cases requiring batch generation with support for multiple responses per input.
+A scalable and efficient data generation pipeline for processing datasets using vLLM models. Supports batch processing, multiple model endpoints, repeated sampling, and fault-tolerant execution with checkpointing.
 
 ## Features
 
-- 🚀 **High Performance**: Built on vLLM for efficient batch generation
-- 🔄 **Repeat Generation**: Generate multiple responses per input with various strategies
-- 🎯 **Flexible Output Formats**: Wide, long, or nested output formats
-- ⚡ **Data Parallelism**: Multi-server and Ray-based distributed processing
-- 💾 **Checkpoint & Resume**: Save progress and resume interrupted generations
-- 📊 **Comprehensive Tracking**: Token usage, performance metrics, and progress monitoring
-- 🔧 **Highly Configurable**: YAML/JSON configs, environment variables, and CLI args
+- 🚀 **High Performance**: Async/await based architecture with parallel processing
+- 🔄 **Multiple Sampling**: Generate multiple responses per input with temperature scheduling
+- ⚖️ **Load Balancing**: Distribute requests across multiple vLLM servers
+- 💾 **Checkpointing**: Resume interrupted jobs from the last checkpoint
+- 📊 **Progress Tracking**: Real-time progress bars and performance metrics
+- 🛡️ **Fault Tolerant**: Automatic retries with exponential backoff
+- 📝 **Comprehensive Logging**: Structured logging with loguru
+- 🎯 **Flexible Configuration**: YAML configs with CLI override support
 
 ## Installation
 
-### Basic Installation
+```bash
+pip install -e .
+```
+
+Or install dependencies directly:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### With vLLM (requires GPU)
-```bash
-pip install vllm>=0.2.0
-```
-
-### With Ray (for distributed processing)
-```bash
-pip install ray>=2.0.0
-```
-
-### Development Installation
-```bash
-pip install -e ".[dev]"
-```
-
 ## Quick Start
 
-### Basic Usage
+### 1. Basic Usage
+
 ```bash
-python -m vllm_generator \
-  --input questions.parquet \
-  --model meta-llama/Llama-2-7b-hf \
-  --output results.parquet
+# Generate responses for a parquet file
+python -m vllm_generator generate \
+    --input data/questions.parquet \
+    --output data/responses.parquet \
+    --model-url http://localhost:8000 \
+    --temperature 0.7 \
+    --max-tokens 512
 ```
 
-### Repeat Generation
+### 2. Using Configuration File
+
 ```bash
-python -m vllm_generator \
-  --input questions.parquet \
-  --model mistralai/Mistral-7B-v0.1 \
-  --num-repeats 5 \
-  --temperature-schedule 0.5,0.7,0.9,1.1,1.3 \
-  --repeat-strategy temperature_schedule
+# Generate using a YAML configuration
+python -m vllm_generator generate --config configs/example_simple.yaml
+
+# Override config parameters via CLI
+python -m vllm_generator generate \
+    --config configs/example_simple.yaml \
+    --num-samples 3 \
+    --temperature 0.9
 ```
 
-### Multi-GPU Parallel Processing
+### 3. Multiple Samples per Input
+
+```yaml
+# configs/multi_sample.yaml
+generation:
+  num_samples: 5
+  temperature: [0.5, 0.7, 0.9, 1.1, 1.3]  # Different temperature for each sample
+```
+
 ```bash
-python -m vllm_generator \
-  --input large_dataset.parquet \
-  --model meta-llama/Llama-2-70b-hf \
-  --parallel-mode multi_server \
-  --num-workers 4 \
-  --worker-gpus 0,1,2,3,4,5,6,7 \
-  --tensor-parallel-size 2
+python -m vllm_generator generate --config configs/multi_sample.yaml
 ```
 
-### Using Configuration File
+### 4. Multiple vLLM Servers
+
 ```bash
-python -m vllm_generator \
-  --config-file configs/example_simple.yaml \
-  --input data.parquet \
-  --output results.parquet
-```
-
-## Input/Output Formats
-
-### Input Format
-The input should be a Parquet file with at least one column containing the questions/prompts:
-
-```python
-import pandas as pd
-
-df = pd.DataFrame({
-    "question": [
-        "What is machine learning?",
-        "Explain quantum computing",
-        "How does photosynthesis work?"
-    ],
-    "category": ["AI", "Physics", "Biology"]  # Optional metadata
-})
-df.to_parquet("questions.parquet")
-```
-
-### Output Formats
-
-#### Wide Format (default)
-Each repeat gets its own column:
-```
-| question | response_0 | response_1 | response_2 |
-|----------|------------|------------|------------|
-| Q1       | R1_0       | R1_1       | R1_2       |
-```
-
-#### Long Format
-Multiple rows per question:
-```
-| question | repeat_id | response |
-|----------|-----------|----------|
-| Q1       | 0         | R1_0     |
-| Q1       | 1         | R1_1     |
-```
-
-#### Nested Format
-List of responses in single column:
-```
-| question | response            |
-|----------|---------------------|
-| Q1       | [R1_0, R1_1, R1_2] |
+# Distribute load across multiple servers
+python -m vllm_generator generate \
+    --input large_dataset.parquet \
+    --output results.parquet \
+    --model-urls http://gpu1:8000 http://gpu2:8000 http://gpu3:8000 \
+    --num-workers 6 \
+    --batch-size 128
 ```
 
 ## Configuration
 
-### Configuration Priority
-1. Configuration file (YAML/JSON)
-2. Environment variables (prefixed with `VLLM_GEN_`)
-3. Command line arguments
+### YAML Configuration Structure
 
-### Example Configuration File
 ```yaml
-model_config:
-  model: "meta-llama/Llama-2-7b-hf"
-  temperature: 0.7
-  max_tokens: 512
+data:
+  input_path: "data/questions.parquet"
+  output_path: "data/responses.parquet"
+  input_column: "question"
+  output_column: "response"
+  copy_columns: ["id", "metadata"]  # Additional columns to preserve
+  filter_condition: "category == 'science'"  # Optional pandas query
+  limit: 1000  # Optional row limit
+  shuffle: true  # Shuffle data before processing
 
-generation_config:
-  batch_size: 32
-  num_repeats: 3
-  checkpoint_frequency: 100
+models:
+  - url: "http://localhost:8000"
+    name: "primary_model"
+    api_key: "optional-api-key"
+    headers:
+      Authorization: "Bearer token"
 
-parallel_config:
-  mode: "single"
+generation:
+  num_samples: 3
+  temperature: 0.8
+  top_p: 0.95
+  top_k: 50
+  max_tokens: 1024
+  stop_sequences: ["###", "END"]
+  seed: 42
+  presence_penalty: 0.1
+  frequency_penalty: 0.1
+
+processing:
+  batch_size: 64
+  num_workers: 2
+  checkpoint_interval: 100
+  checkpoint_dir: "./checkpoints"
+  resume: false
+
+retry:
+  max_retries: 5
+  retry_delay: 2.0
+  timeout: 600
+  backoff_factor: 2.0
+
+logging:
+  level: "INFO"
+  file: "logs/generation.log"
+  rotation: "100 MB"
+  retention: "7 days"
 ```
 
-### Environment Variables
+## CLI Commands
+
+### Generate Command
+
 ```bash
-export VLLM_GEN_MODEL_CONFIG_TEMPERATURE=0.8
-export VLLM_GEN_GENERATION_CONFIG_BATCH_SIZE=64
+python -m vllm_generator generate [OPTIONS]
 ```
 
-## Advanced Features
+Key options:
+- `--config`: Path to YAML configuration file
+- `--input/--output`: Input/output parquet file paths
+- `--model-url`: Single vLLM server URL
+- `--model-urls`: Multiple vLLM server URLs
+- `--num-samples`: Number of samples per input
+- `--temperature`: Sampling temperature
+- `--batch-size`: Batch size for processing
+- `--num-workers`: Number of parallel workers
+- `--resume`: Resume from checkpoint
+- `--dry-run`: Test without making API calls
 
-### Chat Templates
-Use the model's built-in chat template for proper formatting:
+### Validate Command
+
 ```bash
-python -m vllm_generator \
-  --input questions.parquet \
-  --model meta-llama/Llama-2-7b-chat-hf \
-  --use-chat-template \
-  --system-prompt "You are a helpful assistant." \
-  --output chat_results.parquet
+# Validate configuration file
+python -m vllm_generator validate --config config.yaml
 ```
 
-The `--use-chat-template` flag automatically applies the tokenizer's chat template, ensuring proper formatting for chat-tuned models.
+### List Models Command
 
-### Custom Preprocessing
-Create a preprocessing function:
-```python
-# preprocess.py
-def preprocess(question, row):
-    # Add context or modify question
-    return f"Context: {row['context']}\n\nQuestion: {question}"
-```
-
-Use it:
 ```bash
-python -m vllm_generator \
-  --input data.parquet \
-  --preprocessing-fn preprocess.py \
-  --model gpt2
+# List available models from vLLM servers
+python -m vllm_generator list-models --model-url http://localhost:8000
 ```
 
-### Checkpointing
-Automatically saves progress:
+## Advanced Usage
+
+### Checkpointing and Resume
+
 ```bash
-python -m vllm_generator \
-  --input large_data.parquet \
-  --checkpoint-frequency 100 \
-  --resume-from-checkpoint outputs/checkpoint.json
+# First run - will save checkpoints
+python -m vllm_generator generate --config config.yaml
+
+# If interrupted, resume from last checkpoint
+python -m vllm_generator generate --config config.yaml --resume
 ```
 
-### Token Tracking
-Track token usage and costs:
-```bash
-python -m vllm_generator \
-  --input data.parquet \
-  --track-token-usage \
-  --save-metadata
+### Data Filtering
+
+```yaml
+data:
+  filter_condition: "difficulty >= 3 and category == 'technical'"
+  limit: 10000
+  shuffle: true
+```
+
+### Temperature Scheduling
+
+```yaml
+generation:
+  num_samples: 5
+  # Each sample uses a different temperature
+  temperature: [0.5, 0.7, 0.9, 1.1, 1.3]
+```
+
+### Custom Headers and Authentication
+
+```yaml
+models:
+  - url: "http://api.example.com/v1"
+    name: "api_endpoint"
+    api_key: "${API_KEY}"  # Can use environment variables
+    headers:
+      X-Custom-Header: "value"
+```
+
+## Output Format
+
+### Single Sample Output
+```
+| question | response | id | metadata |
+|----------|----------|----|----------|
+| What is ML? | Machine learning is... | 1 | {...} |
+```
+
+### Multiple Samples Output
+```
+| question | response | id | sample_idx |
+|----------|----------|----|------------|
+| What is ML? | Response 1... | 1 | 0 |
+| What is ML? | Response 2... | 1 | 1 |
+| What is ML? | Response 3... | 1 | 2 |
 ```
 
 ## Performance Tips
 
-1. **Batch Size**: Start with 32 and adjust based on GPU memory
-2. **Tensor Parallelism**: Use for models that don't fit on single GPU
-3. **Data Parallelism**: Use multi_server mode for large datasets
-4. **Sharding Strategy**: Use "balanced" for varying prompt lengths
-
-## Troubleshooting
-
-### Out of Memory
-- Reduce `--batch-size`
-- Lower `--gpu-memory-utilization`
-- Enable `--cpu-offload-gb` for large models
-
-### Slow Generation
-- Increase `--batch-size` if GPU memory allows
-- Use `--enable-prefix-caching` for similar prompts
-- Enable `--parallel-mode multi_server` for multiple GPUs
+1. **Batch Size**: Larger batches (64-256) are more efficient for vLLM
+2. **Workers**: Set workers to number of vLLM servers for optimal distribution
+3. **Checkpointing**: Set checkpoint interval based on your dataset size
+4. **Memory**: Monitor memory usage with large datasets or many samples
 
 ## Development
 
 ### Running Tests
+
 ```bash
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
 pytest tests/
+
+# Run with coverage
+pytest --cov=vllm_generator tests/
 ```
 
-### Code Formatting
-```bash
-black src/ tests/
-isort src/ tests/
+### Project Structure
+
+```
+vllm-generator/
+├── src/vllm_generator/
+│   ├── config/         # Configuration management
+│   ├── data/          # Data loading and writing
+│   ├── models/        # vLLM client and generation
+│   ├── pipeline/      # Pipeline orchestration
+│   ├── tracking/      # Metrics and monitoring
+│   └── utils/         # Utilities and helpers
+├── configs/           # Example configurations
+├── tests/            # Unit tests
+└── example_usage.py  # Usage examples
 ```
 
-### Type Checking
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Error**: Ensure vLLM server is running and accessible
+2. **Memory Error**: Reduce batch size or use chunked processing
+3. **Timeout Error**: Increase timeout in retry configuration
+4. **Invalid Column**: Check input_column exists in your parquet file
+
+### Debug Mode
+
 ```bash
-mypy src/
+# Enable debug logging
+python -m vllm_generator generate --config config.yaml --log-level DEBUG
 ```
 
 ## License

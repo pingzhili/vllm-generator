@@ -1,219 +1,138 @@
-import logging
+"""Tracking implementation for monitoring pipeline execution."""
+
 import time
-import json
-from pathlib import Path
-from datetime import datetime
 from typing import Optional, Dict, Any
-import threading
+from contextlib import contextmanager
+from datetime import datetime
 
-logger = logging.getLogger(__name__)
+from .metrics import MetricsCollector, RequestMetrics, BatchMetrics
+from ..utils import get_logger
 
 
-class GenerationTracker:
-    """Tracks generation progress and saves metadata"""
+class ExecutionTracker:
+    """Track execution metrics and performance."""
     
-    def __init__(
+    def __init__(self):
+        """Initialize execution tracker."""
+        self.logger = get_logger("ExecutionTracker")
+        self.metrics_collector = MetricsCollector()
+        self._batch_start_times: Dict[int, float] = {}
+        self._batch_metrics: Dict[int, Dict[str, Any]] = {}
+    
+    @contextmanager
+    def track_request(
         self,
-        output_dir: Optional[Path] = None,
-        save_interval: int = 60,
-        enable_progress_bar: bool = True
+        prompt: str,
+        model_endpoint: Optional[str] = None
     ):
-        self.output_dir = Path(output_dir) if output_dir else Path("./outputs")
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        self.save_interval = save_interval
-        self.enable_progress_bar = enable_progress_bar
-        
-        # Tracking data
-        self.start_time = None
-        self.end_time = None
-        self.completed_items = 0
-        self.total_items = 0
-        self.metrics = {}
-        
-        # Progress bar
-        self.pbar = None
-        if enable_progress_bar:
-            try:
-                from tqdm import tqdm
-                self.tqdm = tqdm
-            except ImportError:
-                logger.warning("tqdm not available, progress bar disabled")
-                self.enable_progress_bar = False
-        
-        # Auto-save thread
-        self.save_thread = None
-        self.stop_save_thread = threading.Event()
-        
-    def start(self, total_items: int):
-        """Start tracking"""
-        self.start_time = time.time()
-        self.total_items = total_items
-        self.completed_items = 0
-        
-        # Create progress bar
-        if self.enable_progress_bar:
-            self.pbar = self.tqdm(
-                total=total_items,
-                desc="Generating",
-                unit="items"
-            )
-        
-        # Start auto-save thread
-        self.save_thread = threading.Thread(target=self._auto_save)
-        self.save_thread.start()
-        
-        logger.info(f"Started tracking {total_items} items")
-    
-    def update_progress(self, completed: int, total: Optional[int] = None, progress_type: str = "items"):
-        """Update progress
-        
-        Args:
-            completed: Number of completed units
-            total: Total number of units
-            progress_type: Type of progress ("items" or "repeats")
-        """
-        if progress_type == "items":
-            self.completed_items = completed
-            if total:
-                self.total_items = total
-            
-            if self.pbar:
-                self.pbar.n = completed
-                self.pbar.refresh()
-            
-            # Calculate ETA for items
-            if self.start_time and completed > 0:
-                elapsed = time.time() - self.start_time
-                rate = completed / elapsed
-                remaining = self.total_items - completed
-                eta = remaining / rate if rate > 0 else 0
-                
-                if self.pbar:
-                    self.pbar.set_postfix({
-                        "rate": f"{rate:.1f} items/s",
-                        "eta": f"{eta:.0f}s"
-                    })
-        elif progress_type == "repeats":
-            # For repeat progress, just update the description
-            if self.pbar:
-                self.pbar.set_description(f"Generating (repeat {completed}/{total})")
-    
-    def update_metrics(self, metrics: Dict[str, Any]):
-        """Update metrics"""
-        self.metrics.update(metrics)
-    
-    def stop(self):
-        """Stop tracking"""
-        self.end_time = time.time()
-        
-        # Stop auto-save thread
-        self.stop_save_thread.set()
-        if self.save_thread:
-            self.save_thread.join()
-        
-        # Close progress bar
-        if self.pbar:
-            self.pbar.close()
-        
-        # Save final state
-        self.save_state()
-        
-        total_time = self.end_time - self.start_time
-        logger.info(
-            f"Completed {self.completed_items}/{self.total_items} items "
-            f"in {total_time:.1f}s ({self.completed_items/total_time:.1f} items/s)"
+        """Track a single request execution."""
+        start_time = time.time()
+        metrics = RequestMetrics(
+            prompt_length=len(prompt),
+            response_length=0,
+            latency=0.0,
+            success=False,
+            model_endpoint=model_endpoint
         )
-    
-    def save_state(self):
-        """Save current state to file"""
-        state = {
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-            "completed_items": self.completed_items,
-            "total_items": self.total_items,
-            "metrics": self.metrics,
-            "timestamp": datetime.now().isoformat()
-        }
         
-        state_path = self.output_dir / "tracker_state.json"
-        with open(state_path, 'w') as f:
-            json.dump(state, f, indent=2)
+        try:
+            yield metrics
+            metrics.success = True
+        except Exception as e:
+            metrics.success = False
+            metrics.error = str(e)
+            raise
+        finally:
+            metrics.latency = time.time() - start_time
+            self.metrics_collector.record_request(metrics)
     
-    def load_state(self) -> Optional[Dict[str, Any]]:
-        """Load saved state"""
-        state_path = self.output_dir / "tracker_state.json"
-        if state_path.exists():
-            with open(state_path, 'r') as f:
-                return json.load(f)
-        return None
+    def start_batch(self, batch_id: int, batch_size: int) -> None:
+        """Start tracking a batch."""
+        self._batch_start_times[batch_id] = time.time()
+        self._batch_metrics[batch_id] = {
+            "size": batch_size,
+            "successful": 0,
+            "failed": 0,
+            "start_time": datetime.now()
+        }
+        self.logger.debug(f"Started tracking batch {batch_id} with {batch_size} items")
     
-    def _auto_save(self):
-        """Auto-save thread function"""
-        while not self.stop_save_thread.is_set():
-            self.stop_save_thread.wait(self.save_interval)
-            if not self.stop_save_thread.is_set():
-                self.save_state()
-    
-    def get_output_path(self) -> str:
-        """Get output file path"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return str(self.output_dir / f"output_{timestamp}.parquet")
-    
-    def get_metadata_path(self) -> str:
-        """Get metadata file path"""
-        return str(self.output_dir / "generation_metadata.json")
-    
-    def get_checkpoint_path(self) -> str:
-        """Get checkpoint file path"""
-        return str(self.output_dir / "checkpoint.json")
-    
-    def save_final_metrics(self):
-        """Save final metrics"""
-        if not self.metrics:
+    def end_batch(self, batch_id: int) -> None:
+        """End tracking a batch."""
+        if batch_id not in self._batch_start_times:
+            self.logger.warning(f"Batch {batch_id} was not started")
             return
         
-        metrics_path = self.output_dir / "final_metrics.json"
-        with open(metrics_path, 'w') as f:
-            json.dump(self.metrics, f, indent=2)
-
-
-class DistributedTracker(GenerationTracker):
-    """Tracker for distributed generation across multiple workers"""
-    
-    def __init__(self, num_workers: int, **kwargs):
-        super().__init__(**kwargs)
-        self.num_workers = num_workers
-        self.worker_progress = [0] * num_workers
-        self.worker_metrics = [{} for _ in range(num_workers)]
+        end_time = datetime.now()
+        start_time = self._batch_metrics[batch_id]["start_time"]
+        total_latency = time.time() - self._batch_start_times[batch_id]
         
-    def update_worker_progress(self, worker_id: int, completed: int):
-        """Update progress for a specific worker"""
-        self.worker_progress[worker_id] = completed
-        total_completed = sum(self.worker_progress)
-        self.update_progress(total_completed)
-    
-    def update_worker_metrics(self, worker_id: int, metrics: Dict[str, Any]):
-        """Update metrics for a specific worker"""
-        self.worker_metrics[worker_id] = metrics
+        metrics = BatchMetrics(
+            batch_id=batch_id,
+            batch_size=self._batch_metrics[batch_id]["size"],
+            successful_requests=self._batch_metrics[batch_id]["successful"],
+            failed_requests=self._batch_metrics[batch_id]["failed"],
+            total_latency=total_latency,
+            start_time=start_time,
+            end_time=end_time
+        )
         
-        # Aggregate metrics
-        aggregated = {}
-        for key in metrics.keys():
-            if isinstance(metrics[key], (int, float)):
-                # Sum numeric metrics
-                aggregated[key] = sum(
-                    m.get(key, 0) for m in self.worker_metrics
-                )
+        self.metrics_collector.record_batch(metrics)
         
-        self.update_metrics(aggregated)
+        # Clean up
+        del self._batch_start_times[batch_id]
+        del self._batch_metrics[batch_id]
+        
+        self.logger.debug(
+            f"Completed batch {batch_id}: {metrics.successful_requests}/{metrics.batch_size} "
+            f"successful, {metrics.average_latency:.2f}s avg latency"
+        )
     
-    def get_worker_summary(self) -> Dict[str, Any]:
-        """Get summary of worker performance"""
-        summary = {
-            "num_workers": self.num_workers,
-            "worker_progress": self.worker_progress,
-            "total_progress": sum(self.worker_progress),
-            "worker_metrics": self.worker_metrics
+    def record_batch_success(self, batch_id: int, count: int = 1) -> None:
+        """Record successful requests in a batch."""
+        if batch_id in self._batch_metrics:
+            self._batch_metrics[batch_id]["successful"] += count
+    
+    def record_batch_failure(self, batch_id: int, count: int = 1) -> None:
+        """Record failed requests in a batch."""
+        if batch_id in self._batch_metrics:
+            self._batch_metrics[batch_id]["failed"] += count
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """Get comprehensive summary of tracked metrics."""
+        return {
+            "request_summary": self.metrics_collector.get_summary(),
+            "batch_summary": self.metrics_collector.get_batch_summary(),
+            "endpoint_summary": self.metrics_collector.get_endpoint_summary(),
         }
-        return summary
+    
+    def log_summary(self) -> None:
+        """Log summary metrics."""
+        summary = self.get_summary()
+        
+        # Log request summary
+        req_summary = summary["request_summary"]
+        self.logger.info(
+            f"Request Summary: {req_summary['total_requests']} total, "
+            f"{req_summary['success_rate']:.2%} success rate, "
+            f"{req_summary['average_latency']:.2f}s avg latency, "
+            f"{req_summary['overall_throughput']:.2f} req/s"
+        )
+        
+        # Log batch summary
+        batch_summary = summary["batch_summary"]
+        if batch_summary["total_batches"] > 0:
+            self.logger.info(
+                f"Batch Summary: {batch_summary['total_batches']} batches, "
+                f"{batch_summary['average_batch_size']:.1f} avg size, "
+                f"{batch_summary['average_throughput']:.2f} req/s avg throughput"
+            )
+        
+        # Log endpoint summary
+        endpoint_summary = summary["endpoint_summary"]
+        for endpoint, stats in endpoint_summary.items():
+            self.logger.info(
+                f"Endpoint {endpoint}: {stats['total_requests']} requests, "
+                f"{stats['success_rate']:.2%} success rate, "
+                f"{stats['average_latency']:.2f}s avg latency"
+            )

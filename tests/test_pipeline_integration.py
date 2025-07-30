@@ -1,216 +1,166 @@
+"""Integration tests for the pipeline."""
+
 import pytest
 import pandas as pd
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
-from vllm_generator import ModelConfig, GenerationConfig
-from vllm_generator import DataLoader, DataProcessor, DataWriter
-from vllm_generator import SimplePipeline
-from vllm_generator import GenerationTracker
+from vllm_generator.pipeline import GenerationPipeline, BatchProcessor
+from vllm_generator.config import Config, DataConfig, ModelConfig
+from vllm_generator.models import GenerationManager
 
 
-class TestPipelineIntegration:
-    """Integration tests for the complete pipeline"""
+class TestBatchProcessor:
+    """Test BatchProcessor functionality."""
     
-    @pytest.mark.integration
-    def test_simple_pipeline_end_to_end(self, sample_parquet_file, temp_dir):
-        """Test complete pipeline execution"""
-        # Create configurations
-        model_config = ModelConfig(model="gpt2", max_tokens=50)
-        generation_config = GenerationConfig(
-            batch_size=2,
-            num_repeats=1,
-            checkpoint_frequency=0  # Disable for test
+    @pytest.fixture
+    def test_config(self, temp_dir, sample_parquet_file):
+        """Create test configuration."""
+        return Config(
+            data=DataConfig(
+                input_path=sample_parquet_file,
+                output_path=temp_dir / "output.parquet",
+                input_column="question",
+                output_column="response"
+            ),
+            models=[ModelConfig(url="http://localhost:8000")]
         )
-        
-        # Create components
-        data_loader = DataLoader(sample_parquet_file, question_column="question")
-        data_processor = DataProcessor(
-            prompt_template="Question: {question}\nAnswer:"
-        )
-        data_writer = DataWriter(output_format="wide")
-        tracker = GenerationTracker(output_dir=temp_dir, enable_progress_bar=False)
-        
-        # Create pipeline
-        pipeline = SimplePipeline(
-            model_config=model_config,
-            generation_config=generation_config,
-            data_loader=data_loader,
-            data_processor=data_processor,
-            data_writer=data_writer,
-            tracker=tracker
-        )
-        
-        # Initialize and run
-        pipeline.initialize()
-        try:
-            result = pipeline.run()
-            
-            # Check results
-            assert "output_path" in result
-            assert "metrics" in result
-            assert result["total_samples"] == 5
-            
-            # Check output file exists
-            output_path = Path(result["output_path"])
-            assert output_path.exists()
-            
-            # Load and check output
-            output_df = pd.read_parquet(output_path)
-            assert len(output_df) == 5
-            assert "response_0" in output_df.columns
-            
-            # Check all questions got responses
-            for idx in range(len(output_df)):
-                assert pd.notna(output_df.iloc[idx]["response_0"])
-        finally:
-            pipeline.shutdown()
     
-    @pytest.mark.integration
-    def test_pipeline_with_repeats(self, sample_parquet_file, temp_dir):
-        """Test pipeline with repeat generation"""
-        model_config = ModelConfig(model="gpt2", max_tokens=30)
-        generation_config = GenerationConfig(
-            batch_size=2,
-            num_repeats=3,
-            repeat_strategy="temperature_schedule",
-            temperature_schedule=[0.5, 1.0, 1.5]
+    @pytest.mark.asyncio
+    async def test_process_dry_run(self, test_config):
+        """Test batch processor in dry run mode."""
+        processor = BatchProcessor(test_config)
+        
+        # Create mock generation manager
+        gen_manager = AsyncMock(spec=GenerationManager)
+        gen_manager.get_statistics.return_value = {"total_requests": 5}
+        
+        # Process in dry run mode
+        stats = await processor.process(
+            gen_manager,
+            dry_run=True,
+            progress_bar=False
         )
         
-        # Create components
-        data_loader = DataLoader(sample_parquet_file)
-        data_processor = DataProcessor()
-        data_writer = DataWriter(output_format="wide")
-        tracker = GenerationTracker(output_dir=temp_dir, enable_progress_bar=False)
+        assert stats["total_processed"] == 5
+        assert stats["processing_time"] > 0
+        assert stats["prompts_per_second"] > 0
         
-        # Create and run pipeline
-        pipeline = SimplePipeline(
-            model_config=model_config,
-            generation_config=generation_config,
-            data_loader=data_loader,
-            data_processor=data_processor,
-            data_writer=data_writer,
-            tracker=tracker
-        )
+        # Verify output file created
+        assert test_config.data.output_path.exists()
         
-        pipeline.initialize()
-        try:
-            result = pipeline.run()
-            
-            # Check output has multiple response columns
-            output_df = pd.read_parquet(result["output_path"])
-            assert "response_0" in output_df.columns
-            assert "response_1" in output_df.columns
-            assert "response_2" in output_df.columns
-        finally:
-            pipeline.shutdown()
+        # Load and verify output
+        output_df = pd.read_parquet(test_config.data.output_path)
+        assert len(output_df) == 5
+        assert "response" in output_df.columns
     
-    @pytest.mark.integration
-    def test_pipeline_with_checkpoint(self, sample_parquet_file, temp_dir):
-        """Test pipeline checkpoint and resume"""
-        model_config = ModelConfig(model="gpt2")
-        generation_config = GenerationConfig(
-            batch_size=1,
-            checkpoint_frequency=2,
-            max_samples=3  # Process only 3 samples
+    @pytest.mark.asyncio
+    async def test_process_with_checkpointing(self, test_config, mock_vllm_responses):
+        """Test batch processor with checkpointing."""
+        test_config.processing.batch_size = 2
+        test_config.processing.checkpoint_interval = 1
+        
+        processor = BatchProcessor(test_config)
+        
+        # Create mock generation manager
+        gen_manager = AsyncMock(spec=GenerationManager)
+        gen_manager.generate_batch = AsyncMock(
+            side_effect=lambda prompts, **kwargs: [
+                {"choices": [{"text": f"Response for: {p}"}]} 
+                for p in prompts
+            ]
+        )
+        gen_manager.extract_texts_from_responses = lambda responses: [
+            r["choices"][0]["text"] for r in responses
+        ]
+        gen_manager.get_statistics.return_value = {"total_requests": 5}
+        
+        # Process
+        stats = await processor.process(
+            gen_manager,
+            dry_run=False,
+            progress_bar=False
         )
         
-        # Create components
-        data_loader = DataLoader(sample_parquet_file)
-        data_processor = DataProcessor()
-        data_writer = DataWriter()
-        tracker = GenerationTracker(output_dir=temp_dir, enable_progress_bar=False)
+        assert stats["total_processed"] == 5
         
-        # First run - should create checkpoint after 2 items
-        pipeline = SimplePipeline(
-            model_config=model_config,
-            generation_config=generation_config,
-            data_loader=data_loader,
-            data_processor=data_processor,
-            data_writer=data_writer,
-            tracker=tracker
-        )
-        
-        pipeline.initialize()
-        try:
-            _ = pipeline.run()
-            
-            # Check checkpoint was created
-            checkpoint_path = Path(tracker.get_checkpoint_path())
-            assert checkpoint_path.exists()
-        finally:
-            pipeline.shutdown()
+        # Check checkpoints were created
+        checkpoint_files = list(test_config.processing.checkpoint_dir.glob("checkpoint_*.json"))
+        assert len(checkpoint_files) > 0
+
+
+class TestGenerationPipeline:
+    """Test GenerationPipeline functionality."""
     
-    @pytest.mark.integration
-    def test_pipeline_error_handling(self, sample_parquet_file, temp_dir):
-        """Test pipeline error handling"""
-        # Create a model config that might cause issues
-        model_config = ModelConfig(model="gpt2", max_tokens=10)
-        generation_config = GenerationConfig(
-            batch_size=2,
-            error_handling="skip",  # Skip errors
-            max_retries=1
+    @pytest.fixture
+    def test_config(self, temp_dir, sample_parquet_file):
+        """Create test configuration."""
+        return Config(
+            data=DataConfig(
+                input_path=sample_parquet_file,
+                output_path=temp_dir / "output.parquet"
+            ),
+            models=[ModelConfig(url="http://localhost:8000")]
         )
-        
-        # Create components
-        data_loader = DataLoader(sample_parquet_file)
-        data_processor = DataProcessor()
-        data_writer = DataWriter()
-        tracker = GenerationTracker(output_dir=temp_dir, enable_progress_bar=False)
-        
-        pipeline = SimplePipeline(
-            model_config=model_config,
-            generation_config=generation_config,
-            data_loader=data_loader,
-            data_processor=data_processor,
-            data_writer=data_writer,
-            tracker=tracker
-        )
-        
-        pipeline.initialize()
-        try:
-            # Should complete even if some generations fail
-            result = pipeline.run()
-            assert result["total_samples"] == 5
-        finally:
-            pipeline.shutdown()
     
-    @pytest.mark.integration
-    def test_pipeline_with_metadata(self, sample_parquet_file, temp_dir):
-        """Test pipeline with metadata saving"""
-        model_config = ModelConfig(model="gpt2")
-        generation_config = GenerationConfig(batch_size=2)
+    @pytest.mark.asyncio
+    async def test_pipeline_validation(self, test_config):
+        """Test pipeline validation."""
+        pipeline = GenerationPipeline(test_config)
         
-        # Create components with metadata enabled
-        data_loader = DataLoader(sample_parquet_file)
-        data_processor = DataProcessor()
-        data_writer = DataWriter(save_metadata=True)
-        tracker = GenerationTracker(output_dir=temp_dir, enable_progress_bar=False)
+        # Mock the generation manager initialization
+        with patch.object(pipeline, 'initialize', new_callable=AsyncMock) as mock_init:
+            result = await pipeline.validate()
+            
+            assert result is True
+            mock_init.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_pipeline_validation_missing_input(self, test_config):
+        """Test pipeline validation with missing input file."""
+        test_config.data.input_path = Path("nonexistent.parquet")
         
-        pipeline = SimplePipeline(
-            model_config=model_config,
-            generation_config=generation_config,
-            data_loader=data_loader,
-            data_processor=data_processor,
-            data_writer=data_writer,
-            tracker=tracker
-        )
+        pipeline = GenerationPipeline(test_config)
+        result = await pipeline.validate()
         
-        pipeline.initialize()
-        try:
-            _ = pipeline.run()
+        assert result is False
+    
+    @pytest.mark.asyncio
+    async def test_pipeline_run_dry(self, test_config):
+        """Test running pipeline in dry run mode."""
+        pipeline = GenerationPipeline(test_config)
+        
+        # Mock health check
+        with patch.object(pipeline, 'initialize', new_callable=AsyncMock):
+            with patch.object(pipeline.batch_processor, 'process', new_callable=AsyncMock) as mock_process:
+                mock_process.return_value = {
+                    "total_processed": 5,
+                    "processing_time": 1.0,
+                    "prompts_per_second": 5.0,
+                    "model_statistics": {}
+                }
+                
+                results = await pipeline.run(dry_run=True, progress_bar=False)
+                
+                assert results["total_processed"] == 5
+                mock_process.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_list_models(self, test_config):
+        """Test listing models from endpoints."""
+        pipeline = GenerationPipeline(test_config)
+        
+        # Mock the clients
+        mock_client = AsyncMock()
+        mock_client.list_models = AsyncMock(return_value=["model1", "model2"])
+        
+        with patch.object(pipeline, 'generation_manager') as mock_gen_manager:
+            mock_gen_manager.clients = {"http://localhost:8000/": mock_client}
+            mock_gen_manager.model_manager.endpoints = [
+                MagicMock(url="http://localhost:8000/", name="test_model")
+            ]
             
-            # Check metadata file was created
-            metadata_path = Path(tracker.get_metadata_path())
-            assert metadata_path.exists()
+            models = await pipeline.list_models()
             
-            # Load and check metadata
-            import json
-            with open(metadata_path) as f:
-                metadata = json.load(f)
-            
-            assert "model_config" in metadata
-            assert "generation_config" in metadata
-            assert "metrics" in metadata
-            assert metadata["model_config"]["model"] == "gpt2"
-        finally:
-            pipeline.shutdown()
+            assert "test_model" in models
+            assert models["test_model"] == ["model1", "model2"]

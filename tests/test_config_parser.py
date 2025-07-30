@@ -1,253 +1,191 @@
-import pytest
-import os
-import json
+"""Tests for configuration parser."""
 
-from vllm_generator import ConfigParser
-from vllm_generator import validate_config, create_config_from_args
+import pytest
+from pathlib import Path
+import yaml
+
+from vllm_generator.config import ConfigParser, Config
+from vllm_generator.config.schemas import (
+    DataConfig, ModelConfig, GenerationConfig,
+    ProcessingConfig, RetryConfig, LoggingConfig
+)
 
 
 class TestConfigParser:
+    """Test configuration parser functionality."""
     
-    def test_load_yaml_config(self, temp_dir):
-        """Test loading YAML configuration"""
-        yaml_content = """
-model_config:
-  model: meta-llama/Llama-2-7b-hf
-  temperature: 0.7
-  max_tokens: 512
-generation_config:
-  batch_size: 32
-  num_repeats: 3
-"""
-        yaml_file = temp_dir / "config.yaml"
-        with open(yaml_file, 'w') as f:
-            f.write(yaml_content)
+    def test_from_dict(self, sample_config_dict):
+        """Test creating config from dictionary."""
+        config = ConfigParser.from_dict(sample_config_dict)
         
-        config = ConfigParser.load_config(str(yaml_file))
-        
-        assert config["model_config"]["model"] == "meta-llama/Llama-2-7b-hf"
-        assert config["model_config"]["temperature"] == 0.7
-        assert config["generation_config"]["batch_size"] == 32
+        assert isinstance(config, Config)
+        assert config.data.input_path == Path("test_input.parquet")
+        assert config.data.output_path == Path("test_output.parquet")
+        assert len(config.models) == 1
+        assert str(config.models[0].url) == "http://localhost:8000/"
+        assert config.generation.num_samples == 1
+        assert config.processing.batch_size == 2
     
-    def test_load_json_config(self, temp_dir):
-        """Test loading JSON configuration"""
-        json_content = {
-            "model_config": {
-                "model": "gpt2",
-                "temperature": 0.5
-            },
-            "generation_config": {
-                "batch_size": 64
-            }
-        }
-        json_file = temp_dir / "config.json"
-        with open(json_file, 'w') as f:
-            json.dump(json_content, f)
+    def test_from_yaml(self, temp_dir, sample_config_dict):
+        """Test loading config from YAML file."""
+        config_file = temp_dir / "test_config.yaml"
+        with open(config_file, "w") as f:
+            yaml.dump(sample_config_dict, f)
         
-        config = ConfigParser.load_config(str(json_file))
+        config = ConfigParser.from_yaml(config_file)
         
-        assert config["model_config"]["model"] == "gpt2"
-        assert config["model_config"]["temperature"] == 0.5
-        assert config["generation_config"]["batch_size"] == 64
+        assert isinstance(config, Config)
+        assert config.data.input_column == "question"
+        assert config.generation.temperature == 1.0
     
-    def test_load_from_env(self):
-        """Test loading configuration from environment variables"""
-        # Set environment variables
-        os.environ["VLLM_GEN_MODEL_CONFIG_TEMPERATURE"] = "0.8"
-        os.environ["VLLM_GEN_GENERATION_CONFIG_BATCH_SIZE"] = "128"
-        os.environ["VLLM_GEN_PARALLEL_CONFIG_NUM_WORKERS"] = "4"
-        
-        try:
-            config = ConfigParser.load_from_env()
-            
-            assert config["model"]["config"]["temperature"] == 0.8
-            assert config["generation"]["config"]["batch"]["size"] == 128
-            assert config["parallel"]["config"]["num"]["workers"] == 4
-        finally:
-            # Clean up
-            for key in list(os.environ.keys()):
-                if key.startswith("VLLM_GEN_"):
-                    del os.environ[key]
-    
-    def test_merge_configs(self):
-        """Test merging multiple configurations"""
-        base_config = {
-            "model_config": {
-                "model": "gpt2",
-                "temperature": 0.7,
-                "max_tokens": 512
-            },
-            "generation_config": {
-                "batch_size": 32
-            }
-        }
-        
-        override_config = {
-            "model_config": {
-                "temperature": 0.9,
-                "top_p": 0.95
-            },
-            "generation_config": {
-                "batch_size": 64,
-                "num_repeats": 3
-            }
-        }
-        
-        merged = ConfigParser.merge_configs(base_config, override_config)
-        
-        assert merged["model_config"]["model"] == "gpt2"  # Preserved
-        assert merged["model_config"]["temperature"] == 0.9  # Overridden
-        assert merged["model_config"]["max_tokens"] == 512  # Preserved
-        assert merged["model_config"]["top_p"] == 0.95  # Added
-        assert merged["generation_config"]["batch_size"] == 64  # Overridden
-        assert merged["generation_config"]["num_repeats"] == 3  # Added
-    
-    def test_save_config(self, temp_dir):
-        """Test saving configuration"""
-        config = {
-            "model_config": {
-                "model": "gpt2",
-                "temperature": 0.7
-            }
-        }
-        
-        # Save as YAML
-        yaml_path = temp_dir / "saved_config.yaml"
-        ConfigParser.save_config(config, str(yaml_path))
-        
-        assert yaml_path.exists()
-        loaded_yaml = ConfigParser.load_config(str(yaml_path))
-        assert loaded_yaml == config
-        
-        # Save as JSON
-        json_path = temp_dir / "saved_config.json"
-        ConfigParser.save_config(config, str(json_path))
-        
-        assert json_path.exists()
-        loaded_json = ConfigParser.load_config(str(json_path))
-        assert loaded_json == config
-    
-    def test_create_example_config(self):
-        """Test creating example configuration"""
-        config = ConfigParser.create_example_config()
-        
-        assert "model_config" in config
-        assert "generation_config" in config
-        assert "data_config" in config
-        assert "parallel_config" in config
-        assert "logging_config" in config
-        
-        assert config["model_config"]["model"] == "meta-llama/Llama-2-7b-hf"
-        assert config["generation_config"]["batch_size"] == 32
-        assert config["parallel_config"]["mode"] == "single"
-    
-    def test_invalid_config_file(self, temp_dir):
-        """Test handling of invalid config file"""
-        # Non-existent file
+    def test_from_yaml_file_not_found(self):
+        """Test error when YAML file doesn't exist."""
         with pytest.raises(FileNotFoundError):
-            ConfigParser.load_config("non_existent.yaml")
-        
-        # Unsupported file type
-        txt_file = temp_dir / "config.txt"
-        txt_file.write_text("invalid config")
-        
-        with pytest.raises(ValueError, match="Unsupported config file type"):
-            ConfigParser.load_config(str(txt_file))
-
-
-class TestConfigValidation:
+            ConfigParser.from_yaml(Path("nonexistent.yaml"))
     
-    def test_validate_valid_config(self):
-        """Test validation of valid configuration"""
-        config = {
-            "model_config": {
-                "model": "gpt2",
-                "temperature": 0.7,
-                "top_p": 0.95,
-                "gpu_memory_utilization": 0.9,
-                "max_tokens": 512
-            },
-            "generation_config": {
-                "batch_size": 32,
-                "num_repeats": 3,
-                "repeat_strategy": "independent"
-            }
-        }
+    def test_merge_cli_args(self, sample_config_dict):
+        """Test merging CLI arguments into config."""
+        config = ConfigParser.from_dict(sample_config_dict)
         
-        errors = validate_config(config)
-        assert len(errors) == 0
-    
-    def test_validate_invalid_config(self):
-        """Test validation of invalid configuration"""
-        config = {
-            "model_config": {
-                # Missing required model field
-                "temperature": -1,  # Invalid
-                "top_p": 1.5,  # Invalid
-                "gpu_memory_utilization": 1.5,  # Invalid
-                "max_tokens": -10  # Invalid
-            },
-            "generation_config": {
-                "batch_size": 0,  # Invalid
-                "num_repeats": -1,  # Invalid
-                "repeat_strategy": "invalid_strategy"  # Invalid
-            }
-        }
-        
-        errors = validate_config(config)
-        
-        assert "model" in errors
-        assert "temperature" in errors
-        assert "top_p" in errors
-        assert "gpu_memory_utilization" in errors
-        assert "max_tokens" in errors
-        assert "batch_size" in errors
-        assert "num_repeats" in errors
-        assert "repeat_strategy" in errors
-    
-    def test_validate_temperature_schedule(self):
-        """Test validation of temperature schedule"""
-        # Valid temperature schedule
-        config = {
-            "model_config": {"model": "gpt2"},
-            "generation_config": {
-                "num_repeats": 3,
-                "repeat_strategy": "temperature_schedule",
-                "temperature_schedule": [0.5, 0.7, 0.9]
-            }
-        }
-        errors = validate_config(config)
-        assert len(errors) == 0
-        
-        # Missing temperature schedule
-        config["generation_config"]["temperature_schedule"] = None
-        errors = validate_config(config)
-        assert "temperature_schedule" in errors
-        
-        # Wrong length
-        config["generation_config"]["temperature_schedule"] = [0.5, 0.7]
-        errors = validate_config(config)
-        assert "temperature_schedule" in errors
-    
-    def test_create_config_from_args(self):
-        """Test creating configuration from parsed arguments"""
-        args = {
-            "model": "gpt2",
+        cli_args = {
+            "input": Path("new_input.parquet"),
+            "output": Path("new_output.parquet"),
+            "num_samples": 5,
             "temperature": 0.8,
-            "max_tokens": 256,
             "batch_size": 64,
-            "num_repeats": 3,
-            "parallel_mode": "multi_server",
-            "num_workers": 4,
-            "log_level": "DEBUG",
-            "output_dir": "/tmp/outputs"
+            "model_url": "http://new-server:8000"
         }
         
-        config = create_config_from_args(args)
+        merged_config = ConfigParser.merge_cli_args(config, cli_args)
         
-        assert config["model_config"]["model"] == "gpt2"
-        assert config["model_config"]["temperature"] == 0.8
-        assert config["generation_config"]["batch_size"] == 64
-        assert config["parallel_config"]["parallel_mode"] == "multi_server"
-        assert config["logging_config"]["log_level"] == "DEBUG"
-        assert config["output_dir"] == "/tmp/outputs"
+        assert merged_config.data.input_path == Path("new_input.parquet")
+        assert merged_config.data.output_path == Path("new_output.parquet")
+        assert merged_config.generation.num_samples == 5
+        assert merged_config.generation.temperature == 0.8
+        assert merged_config.processing.batch_size == 64
+        assert str(merged_config.models[0].url) == "http://new-server:8000/"
+    
+    def test_merge_cli_args_model_urls(self, sample_config_dict):
+        """Test merging multiple model URLs from CLI."""
+        config = ConfigParser.from_dict(sample_config_dict)
+        
+        cli_args = {
+            "model_urls": ["http://server1:8000", "http://server2:8000"]
+        }
+        
+        merged_config = ConfigParser.merge_cli_args(config, cli_args)
+        
+        assert len(merged_config.models) == 2
+        assert str(merged_config.models[0].url) == "http://server1:8000/"
+        assert str(merged_config.models[1].url) == "http://server2:8000/"
+    
+    def test_to_yaml(self, temp_dir, sample_config_dict):
+        """Test saving config to YAML file."""
+        config = ConfigParser.from_dict(sample_config_dict)
+        
+        output_file = temp_dir / "output_config.yaml"
+        ConfigParser.to_yaml(config, output_file)
+        
+        assert output_file.exists()
+        
+        # Load and verify
+        with open(output_file, "r") as f:
+            loaded_data = yaml.safe_load(f)
+        
+        assert loaded_data["data"]["input_column"] == "question"
+        assert loaded_data["generation"]["num_samples"] == 1
+    
+    def test_create_default_config(self):
+        """Test creating default config with minimal parameters."""
+        config = ConfigParser.create_default_config(
+            input_path="input.parquet",
+            output_path="output.parquet",
+            model_url="http://localhost:8000",
+            num_samples=3,
+            temperature=0.7
+        )
+        
+        assert config.data.input_path == Path("input.parquet")
+        assert config.data.output_path == Path("output.parquet")
+        assert str(config.models[0].url) == "http://localhost:8000/"
+        assert config.generation.num_samples == 3
+        assert config.generation.temperature == 0.7
+
+
+class TestConfigSchemas:
+    """Test configuration schema validation."""
+    
+    def test_data_config_validation(self):
+        """Test DataConfig validation."""
+        # Valid config
+        config = DataConfig(
+            input_path=Path("input.parquet"),
+            output_path=Path("output.parquet")
+        )
+        assert config.input_column == "question"  # default
+        assert config.output_column == "response"  # default
+        
+        # Invalid file extension
+        with pytest.raises(ValueError, match="Input file must be a parquet file"):
+            DataConfig(
+                input_path=Path("input.csv"),
+                output_path=Path("output.parquet")
+            )
+        
+        with pytest.raises(ValueError, match="Output file must be a parquet file"):
+            DataConfig(
+                input_path=Path("input.parquet"),
+                output_path=Path("output.json")
+            )
+    
+    def test_generation_config_temperature_validation(self):
+        """Test temperature validation in GenerationConfig."""
+        # Single temperature
+        config = GenerationConfig(temperature=0.8)
+        assert config.temperature == 0.8
+        
+        # Temperature list matching num_samples
+        config = GenerationConfig(
+            num_samples=3,
+            temperature=[0.5, 0.7, 0.9]
+        )
+        assert config.temperature == [0.5, 0.7, 0.9]
+        
+        # Temperature list not matching num_samples
+        with pytest.raises(ValueError, match="Temperature list length"):
+            GenerationConfig(
+                num_samples=3,
+                temperature=[0.5, 0.7]
+            )
+    
+    def test_logging_config_validation(self):
+        """Test LoggingConfig validation."""
+        # Valid log level
+        config = LoggingConfig(level="debug")
+        assert config.level == "DEBUG"  # Should be uppercase
+        
+        # Invalid log level
+        with pytest.raises(ValueError, match="Invalid log level"):
+            LoggingConfig(level="INVALID")
+    
+    def test_config_validation(self):
+        """Test main Config validation."""
+        # No models
+        with pytest.raises(ValueError, match="At least one model must be configured"):
+            Config(
+                data=DataConfig(
+                    input_path=Path("input.parquet"),
+                    output_path=Path("output.parquet")
+                ),
+                models=[]
+            )
+        
+        # Valid config
+        config = Config(
+            data=DataConfig(
+                input_path=Path("input.parquet"),
+                output_path=Path("output.parquet")
+            ),
+            models=[ModelConfig(url="http://localhost:8000")]
+        )
+        assert len(config.models) == 1

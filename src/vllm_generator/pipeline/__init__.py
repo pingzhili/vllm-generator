@@ -1,5 +1,14 @@
-from .base import BasePipeline
-from .batch_processor import BatchProcessor
-from .manager import PipelineManager
+"""Pipeline module for orchestrating data generation."""
 
-__all__ = ["BasePipeline", "BatchProcessor", "PipelineManager"]
+from .base import Pipeline, PipelineStep
+from .batch_processor import BatchProcessor, CheckpointManager
+from .manager import GenerationPipeline, run_pipeline
+
+__all__ = [
+    "Pipeline",
+    "PipelineStep",
+    "BatchProcessor",
+    "CheckpointManager",
+    "GenerationPipeline",
+    "run_pipeline",
+]

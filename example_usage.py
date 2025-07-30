@@ -1,225 +1,244 @@
-#!/usr/bin/env python3
-"""
-Example usage of vLLM Generator
-"""
+"""Example usage of vLLM Generator."""
 
+import asyncio
 import pandas as pd
 from pathlib import Path
 
-# Create sample data
-def create_sample_data():
-    """Create a sample parquet file with questions"""
+from vllm_generator import Pipeline, Config
+from vllm_generator.config import ConfigParser
+from vllm_generator.pipeline import GenerationPipeline
+
+
+async def basic_example():
+    """Basic example with minimal configuration."""
+    print("=== Basic Example ===")
     
-    questions = [
-        "What is the capital of France?",
-        "Explain the theory of relativity in simple terms.",
-        "How do neural networks work?",
-        "What are the main causes of climate change?",
-        "Describe the process of photosynthesis.",
-        "What is quantum computing?",
-        "How does the internet work?",
-        "What are the benefits of renewable energy?",
-        "Explain machine learning to a 5-year-old.",
-        "What is the difference between AI and ML?"
-    ]
-    
-    # Create dataframe
+    # Create sample data
     df = pd.DataFrame({
-        "question": questions,
-        "category": ["Geography", "Physics", "AI", "Environment", "Biology", 
-                     "Technology", "Technology", "Environment", "AI", "AI"],
-        "difficulty": ["Easy", "Hard", "Medium", "Medium", "Medium",
-                      "Hard", "Medium", "Easy", "Easy", "Medium"]
+        "question": [
+            "What is machine learning?",
+            "Explain neural networks",
+            "What is deep learning?",
+        ],
+        "id": [1, 2, 3]
     })
+    df.to_parquet("sample_questions.parquet")
     
-    # Save to parquet
-    output_path = Path("sample_questions.parquet")
-    df.to_parquet(output_path)
-    print(f"Created sample data: {output_path}")
-    return output_path
-
-
-def example_basic_usage():
-    """Example of basic usage"""
-    print("\n=== Basic Usage Example ===")
-    print("""
-python -m vllm_generator \\
-    --input sample_questions.parquet \\
-    --model meta-llama/Llama-2-7b-hf \\
-    --output results.parquet \\
-    --max-tokens 100
-    """)
-
-
-def example_repeat_generation():
-    """Example with repeat generation"""
-    print("\n=== Repeat Generation Example ===")
-    print("""
-python -m vllm_generator \\
-    --input sample_questions.parquet \\
-    --model mistralai/Mistral-7B-v0.1 \\
-    --num-repeats 5 \\
-    --repeat-strategy temperature_schedule \\
-    --temperature-schedule 0.3,0.5,0.7,0.9,1.1 \\
-    --output-format nested \\
-    --output results_multiple.parquet
-    """)
-
-
-def example_parallel_processing():
-    """Example with parallel processing"""
-    print("\n=== Parallel Processing Example ===")
-    print("""
-# Multi-server mode (requires multiple GPUs)
-python -m vllm_generator \\
-    --input large_dataset.parquet \\
-    --model meta-llama/Llama-2-70b-hf \\
-    --parallel-mode multi_server \\
-    --num-workers 4 \\
-    --worker-gpus 0,1,2,3,4,5,6,7 \\
-    --tensor-parallel-size 2 \\
-    --batch-size 8 \\
-    --output parallel_results.parquet
-    """)
-
-
-def example_with_config():
-    """Example using configuration file"""
-    print("\n=== Configuration File Example ===")
+    # Create configuration
+    config = ConfigParser.create_default_config(
+        input_path="sample_questions.parquet",
+        output_path="sample_responses.parquet",
+        model_url="http://localhost:8000",
+        num_samples=1,
+        temperature=0.7,
+        max_tokens=256
+    )
     
-    # Create example config
-    config_content = """
-model_config:
-  model: meta-llama/Llama-2-7b-hf
-  temperature: 0.7
-  max_tokens: 200
-  top_p: 0.95
-
-generation_config:
-  batch_size: 16
-  num_repeats: 3
-  checkpoint_frequency: 50
-  error_handling: skip
-
-data_config:
-  question_column: question
-  output_format: wide
-  prompt_template: |
-    Answer the following question concisely:
-    {question}
+    # Run pipeline
+    pipeline = GenerationPipeline(config)
+    results = await pipeline.run(dry_run=True)  # Use dry_run=True for testing
     
-    Answer:
-
-logging_config:
-  level: INFO
-  progress_bar: true
-  save_metadata: true
-"""
+    print(f"Processed {results['total_processed']} items")
+    print(f"Time: {results['processing_time']:.2f}s")
+    print(f"Throughput: {results['prompts_per_second']:.2f} prompts/s")
     
-    config_path = Path("example_config.yaml")
-    config_path.write_text(config_content)
-    print(f"Created config file: {config_path}")
+    # Read results
+    output_df = pd.read_parquet("sample_responses.parquet")
+    print("\nResults:")
+    print(output_df[["question", "response"]].head())
+
+
+async def multi_sample_example():
+    """Example with multiple samples per input."""
+    print("\n=== Multi-Sample Example ===")
     
-    print("""
-# Run with config file
-python -m vllm_generator \\
-    --config-file example_config.yaml \\
-    --input sample_questions.parquet \\
-    --output configured_results.parquet
-    """)
-
-
-def example_custom_preprocessing():
-    """Example with custom preprocessing"""
-    print("\n=== Custom Preprocessing Example ===")
+    # Configuration with multiple samples and temperature variation
+    config_dict = {
+        "data": {
+            "input_path": "sample_questions.parquet",
+            "output_path": "multi_sample_responses.parquet",
+            "input_column": "question",
+            "output_column": "response"
+        },
+        "models": [
+            {"url": "http://localhost:8000", "name": "primary"}
+        ],
+        "generation": {
+            "num_samples": 3,
+            "temperature": [0.5, 0.8, 1.1],  # Different temperature for each sample
+            "max_tokens": 512,
+            "top_p": 0.95
+        },
+        "processing": {
+            "batch_size": 16,
+            "num_workers": 1
+        }
+    }
     
-    # Create preprocessing function
-    preprocess_content = '''
-def preprocess(question, row):
-    """Add category context to questions"""
-    category = row.get("category", "General")
-    difficulty = row.get("difficulty", "Medium")
+    config = ConfigParser.from_dict(config_dict)
     
-    return f"""[Category: {category}] [Difficulty: {difficulty}]
-Question: {question}
-Please provide a detailed answer appropriate for the difficulty level."""
-'''
+    # Run pipeline
+    pipeline = GenerationPipeline(config)
+    results = await pipeline.run(dry_run=True)
     
-    preprocess_path = Path("custom_preprocess.py")
-    preprocess_path.write_text(preprocess_content)
-    print(f"Created preprocessing file: {preprocess_path}")
+    print(f"Generated {results['total_processed']} responses")
     
-    print("""
-# Run with custom preprocessing
-python -m vllm_generator \\
-    --input sample_questions.parquet \\
-    --model gpt2 \\
-    --preprocessing-fn custom_preprocess.py \\
-    --output preprocessed_results.parquet
-    """)
-
-
-def example_with_chat_template():
-    """Example using tokenizer's chat template"""
-    print("\n=== Chat Template Example ===")
-    print("""
-# Using tokenizer's built-in chat template
-python -m vllm_generator \\
-    --input sample_questions.parquet \\
-    --model meta-llama/Llama-2-7b-chat-hf \\
-    --use-chat-template \\
-    --system-prompt "You are a helpful assistant." \\
-    --max-tokens 200 \\
-    --output chat_results.parquet
-    """)
-
-
-def analyze_results():
-    """Example of analyzing results"""
-    print("\n=== Analyzing Results ===")
-    print("""
-import pandas as pd
-
-# Load results
-results = pd.read_parquet("results.parquet")
-
-# For wide format with repeats
-if "response_0" in results.columns:
-    # Calculate response lengths
-    for i in range(3):  # Assuming 3 repeats
-        col = f"response_{i}"
-        if col in results.columns:
-            results[f"{col}_length"] = results[col].str.len()
+    # Read results - will have multiple rows per question
+    output_df = pd.read_parquet("multi_sample_responses.parquet")
+    print(f"\nTotal rows: {len(output_df)} (3 questions × 3 samples)")
     
-    # Find average length per question
-    length_cols = [col for col in results.columns if col.endswith("_length")]
-    results["avg_response_length"] = results[length_cols].mean(axis=1)
+    # Show samples for first question
+    first_question_samples = output_df[output_df["id"] == 1]
+    print("\nSamples for first question:")
+    for idx, row in first_question_samples.iterrows():
+        print(f"Sample {row['sample_idx']}: {row['response'][:50]}...")
 
-# Display sample results
-print(results[["question", "response_0"]].head())
 
-# Save analysis
-results.to_csv("results_analysis.csv", index=False)
-    """)
+async def multi_server_example():
+    """Example with multiple vLLM servers."""
+    print("\n=== Multi-Server Example ===")
+    
+    config_dict = {
+        "data": {
+            "input_path": "sample_questions.parquet",
+            "output_path": "multi_server_responses.parquet"
+        },
+        "models": [
+            {"url": "http://server1:8000", "name": "server1"},
+            {"url": "http://server2:8000", "name": "server2"},
+            {"url": "http://server3:8000", "name": "server3"}
+        ],
+        "generation": {
+            "num_samples": 1,
+            "temperature": 0.7,
+            "max_tokens": 1024
+        },
+        "processing": {
+            "batch_size": 64,
+            "num_workers": 3  # Parallel processing across servers
+        }
+    }
+    
+    config = ConfigParser.from_dict(config_dict)
+    
+    # Save configuration for reuse
+    ConfigParser.to_yaml(config, Path("multi_server_config.yaml"))
+    print("Saved configuration to multi_server_config.yaml")
+    
+    # In real usage, servers would be running
+    # pipeline = GenerationPipeline(config)
+    # results = await pipeline.run()
+
+
+async def filtered_processing_example():
+    """Example with data filtering and custom columns."""
+    print("\n=== Filtered Processing Example ===")
+    
+    # Create sample data with categories
+    df = pd.DataFrame({
+        "question": [
+            "What is Python?",
+            "Explain quantum computing",
+            "What is JavaScript?",
+            "How do black holes form?",
+            "What is Rust?",
+        ],
+        "id": [1, 2, 3, 4, 5],
+        "category": ["programming", "physics", "programming", "physics", "programming"],
+        "difficulty": [1, 3, 1, 3, 2]
+    })
+    df.to_parquet("categorized_questions.parquet")
+    
+    config_dict = {
+        "data": {
+            "input_path": "categorized_questions.parquet",
+            "output_path": "filtered_responses.parquet",
+            "input_column": "question",
+            "output_column": "response",
+            "copy_columns": ["id", "category", "difficulty"],
+            "filter_condition": "category == 'programming' and difficulty <= 2",
+            "shuffle": True
+        },
+        "models": [
+            {"url": "http://localhost:8000"}
+        ],
+        "generation": {
+            "temperature": 0.6,
+            "max_tokens": 256
+        }
+    }
+    
+    config = ConfigParser.from_dict(config_dict)
+    pipeline = GenerationPipeline(config)
+    
+    # This would process only programming questions with difficulty <= 2
+    print("Will process filtered data: programming questions with difficulty <= 2")
+
+
+async def checkpoint_resume_example():
+    """Example showing checkpoint and resume functionality."""
+    print("\n=== Checkpoint/Resume Example ===")
+    
+    config_dict = {
+        "data": {
+            "input_path": "sample_questions.parquet",
+            "output_path": "checkpoint_example.parquet"
+        },
+        "models": [
+            {"url": "http://localhost:8000"}
+        ],
+        "processing": {
+            "batch_size": 1,  # Small batch for demonstration
+            "checkpoint_interval": 1,  # Checkpoint after every batch
+            "checkpoint_dir": "./example_checkpoints",
+            "resume": False  # Set to True to resume from checkpoint
+        }
+    }
+    
+    config = ConfigParser.from_dict(config_dict)
+    
+    # First run - will create checkpoints
+    print("First run - creating checkpoints...")
+    # pipeline = GenerationPipeline(config)
+    # await pipeline.run()
+    
+    # To resume from checkpoint:
+    # config.processing.resume = True
+    # pipeline = GenerationPipeline(config)
+    # await pipeline.run()
+    
+    print("To resume: set config.processing.resume = True")
+
+
+def create_sample_data():
+    """Create various sample datasets for examples."""
+    # Large dataset example
+    large_df = pd.DataFrame({
+        "question": [f"Question {i}: Tell me about topic {i}" for i in range(1000)],
+        "id": list(range(1000)),
+        "category": ["science", "tech", "history", "art"] * 250,
+        "metadata": [{"source": "dataset", "version": 1}] * 1000
+    })
+    large_df.to_parquet("large_dataset.parquet")
+    print("Created large_dataset.parquet with 1000 rows")
+
+
+async def main():
+    """Run all examples."""
+    # Create sample data
+    create_sample_data()
+    
+    # Run examples
+    await basic_example()
+    await multi_sample_example()
+    await multi_server_example()
+    await filtered_processing_example()
+    await checkpoint_resume_example()
+    
+    print("\n=== Examples Complete ===")
+    print("Note: These examples use dry_run=True for testing without a vLLM server")
+    print("To run with actual vLLM server, set dry_run=False and ensure server is running")
 
 
 if __name__ == "__main__":
-    print("vLLM Generator - Example Usage")
-    print("=" * 50)
-    
-    # Create sample data
-    sample_file = create_sample_data()
-    
-    # Show examples
-    example_basic_usage()
-    example_repeat_generation()
-    example_parallel_processing()
-    example_with_config()
-    example_with_chat_template()
-    example_custom_preprocessing()
-    analyze_results()
-    
-    print("\n" + "=" * 50)
-    print("Note: These examples assume vLLM is installed and you have access to the specified models.")
-    print("For testing without GPU, the system will automatically use a mock model.")
-    print("\nFor more information, see the README.md file.")
+    asyncio.run(main())

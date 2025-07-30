@@ -1,163 +1,173 @@
+"""Tests for model configuration and management."""
+
 import pytest
-import json
+from vllm_generator.models import ModelManager, ModelEndpoint
+from vllm_generator.config.schemas import ModelConfig
 
-from vllm_generator import ModelConfig, GenerationConfig
 
-
-class TestModelConfig:
+class TestModelEndpoint:
+    """Test ModelEndpoint functionality."""
     
-    def test_default_config(self):
-        """Test default configuration values"""
-        config = ModelConfig(model="gpt2")
-        
-        assert config.model == "gpt2"
-        assert config.dtype == "auto"
-        assert config.temperature == 1.0
-        assert config.max_tokens == 512
-        assert config.gpu_memory_utilization == 0.9
-        assert config.tensor_parallel_size == 1
-    
-    def test_config_validation(self):
-        """Test configuration validation"""
-        # Valid config
-        config = ModelConfig(model="gpt2")
-        config.validate()  # Should not raise
-        
-        # Invalid temperature
-        config = ModelConfig(model="gpt2", temperature=-1)
-        with pytest.raises(ValueError, match="temperature must be non-negative"):
-            config.validate()
-        
-        # Invalid top_p
-        config = ModelConfig(model="gpt2", top_p=1.5)
-        with pytest.raises(ValueError, match="top_p must be between 0 and 1"):
-            config.validate()
-        
-        # Invalid gpu_memory_utilization
-        config = ModelConfig(model="gpt2", gpu_memory_utilization=1.5)
-        with pytest.raises(ValueError, match="gpu_memory_utilization must be between 0 and 1"):
-            config.validate()
-    
-    def test_to_vllm_args(self):
-        """Test conversion to vLLM arguments"""
-        config = ModelConfig(
-            model="meta-llama/Llama-2-7b-hf",
-            dtype="float16",
-            gpu_memory_utilization=0.95,
-            tensor_parallel_size=2,
-            max_model_len=2048,
-            quantization="awq"
+    def test_model_endpoint_creation(self):
+        """Test creating model endpoint."""
+        endpoint = ModelEndpoint(
+            url="http://localhost:8000",
+            name="test_model",
+            api_key="secret",
+            headers={"Authorization": "Bearer token"},
+            weight=2.0
         )
         
-        vllm_args = config.to_vllm_args()
-        
-        assert vllm_args["model"] == "meta-llama/Llama-2-7b-hf"
-        assert vllm_args["dtype"] == "float16"
-        assert vllm_args["gpu_memory_utilization"] == 0.95
-        assert vllm_args["tensor_parallel_size"] == 2
-        assert vllm_args["max_model_len"] == 2048
-        assert vllm_args["quantization"] == "awq"
-    
-    def test_to_sampling_params(self):
-        """Test conversion to sampling parameters"""
-        config = ModelConfig(
-            model="gpt2",
-            temperature=0.8,
-            top_p=0.95,
-            top_k=50,
-            max_tokens=256,
-            repetition_penalty=1.1,
-            stop_sequences=["\\n", "END"],
-            seed=42
-        )
-        
-        sampling_params = config.to_sampling_params()
-        
-        assert sampling_params["temperature"] == 0.8
-        assert sampling_params["top_p"] == 0.95
-        assert sampling_params["top_k"] == 50
-        assert sampling_params["max_tokens"] == 256
-        assert sampling_params["repetition_penalty"] == 1.1
-        assert sampling_params["stop"] == ["\\n", "END"]
-        assert sampling_params["seed"] == 42
-    
-    def test_from_yaml(self, temp_dir):
-        """Test loading config from YAML"""
-        yaml_content = """
-model: meta-llama/Llama-2-7b-hf
-temperature: 0.7
-max_tokens: 1024
-gpu_memory_utilization: 0.95
-"""
-        yaml_file = temp_dir / "config.yaml"
-        with open(yaml_file, 'w') as f:
-            f.write(yaml_content)
-        
-        config = ModelConfig.from_yaml(str(yaml_file))
-        
-        assert config.model == "meta-llama/Llama-2-7b-hf"
-        assert config.temperature == 0.7
-        assert config.max_tokens == 1024
-        assert config.gpu_memory_utilization == 0.95
-    
-    def test_from_json(self, temp_dir):
-        """Test loading config from JSON"""
-        json_content = {
-            "model": "gpt2",
-            "temperature": 0.5,
-            "max_tokens": 512
-        }
-        json_file = temp_dir / "config.json"
-        with open(json_file, 'w') as f:
-            json.dump(json_content, f)
-        
-        config = ModelConfig.from_json(str(json_file))
-        
-        assert config.model == "gpt2"
-        assert config.temperature == 0.5
-        assert config.max_tokens == 512
-    
-    def test_update_config(self):
-        """Test updating configuration"""
-        config = ModelConfig(model="gpt2")
-        
-        config.update(temperature=0.8, max_tokens=256)
-        
-        assert config.temperature == 0.8
-        assert config.max_tokens == 256
-        
-        # Try invalid field
-        with pytest.raises(ValueError, match="Unknown config parameter"):
-            config.update(invalid_field=123)
+        assert endpoint.url == "http://localhost:8000"
+        assert endpoint.name == "test_model"
+        assert endpoint.api_key == "secret"
+        assert endpoint.headers == {"Authorization": "Bearer token"}
+        assert endpoint.weight == 2.0
+        assert endpoint.is_healthy is True
+        assert endpoint.request_count == 0
+        assert endpoint.error_count == 0
 
 
-class TestGenerationConfig:
+class TestModelManager:
+    """Test ModelManager functionality."""
     
-    def test_default_generation_config(self):
-        """Test default generation configuration"""
-        config = GenerationConfig()
+    def test_initialization(self):
+        """Test model manager initialization."""
+        configs = [
+            ModelConfig(url="http://server1:8000", name="model1"),
+            ModelConfig(url="http://server2:8000", name="model2"),
+        ]
         
-        assert config.batch_size == 32
-        assert config.num_repeats == 1
-        assert config.repeat_strategy == "independent"
-        assert config.checkpoint_frequency == 100
-        assert config.error_handling == "skip"
-        assert config.max_retries == 3
+        manager = ModelManager(configs)
+        
+        assert len(manager.endpoints) == 2
+        assert manager.endpoints[0].name == "model1"
+        assert manager.endpoints[1].name == "model2"
     
-    def test_generation_config_from_dict(self):
-        """Test creating generation config from dictionary"""
-        config_dict = {
-            "batch_size": 64,
-            "num_repeats": 5,
-            "repeat_strategy": "temperature_schedule",
-            "temperature_schedule": [0.5, 0.7, 0.9, 1.1, 1.3],
-            "checkpoint_frequency": 50
-        }
+    def test_get_endpoint_round_robin(self):
+        """Test round-robin endpoint selection."""
+        configs = [
+            ModelConfig(url="http://server1:8000", name="model1"),
+            ModelConfig(url="http://server2:8000", name="model2"),
+        ]
         
-        config = GenerationConfig.from_dict(config_dict)
+        manager = ModelManager(configs)
         
-        assert config.batch_size == 64
-        assert config.num_repeats == 5
-        assert config.repeat_strategy == "temperature_schedule"
-        assert config.temperature_schedule == [0.5, 0.7, 0.9, 1.1, 1.3]
-        assert config.checkpoint_frequency == 50
+        # First round
+        ep1 = manager.get_endpoint(strategy="round_robin")
+        assert ep1.request_count == 1
+        
+        ep2 = manager.get_endpoint(strategy="round_robin")
+        assert ep2.request_count == 1
+        
+        # Second round - should go back to first
+        ep3 = manager.get_endpoint(strategy="round_robin")
+        assert ep3 == ep1
+        assert ep3.request_count == 2
+    
+    def test_get_endpoint_random(self):
+        """Test random endpoint selection."""
+        configs = [
+            ModelConfig(url="http://server1:8000", name="model1"),
+            ModelConfig(url="http://server2:8000", name="model2"),
+        ]
+        
+        manager = ModelManager(configs)
+        
+        # Random selection - just verify it returns valid endpoint
+        endpoint = manager.get_endpoint(strategy="random")
+        assert endpoint in manager.endpoints
+        assert endpoint.request_count == 1
+    
+    def test_get_endpoint_unhealthy(self):
+        """Test endpoint selection with unhealthy endpoints."""
+        configs = [
+            ModelConfig(url="http://server1:8000", name="model1"),
+            ModelConfig(url="http://server2:8000", name="model2"),
+        ]
+        
+        manager = ModelManager(configs)
+        
+        # Mark first endpoint as unhealthy
+        manager.mark_unhealthy(manager.endpoints[0])
+        
+        # Should only return healthy endpoint
+        for _ in range(5):
+            endpoint = manager.get_endpoint()
+            assert endpoint.name == "model2"
+            assert endpoint.is_healthy is True
+    
+    def test_mark_unhealthy_healthy(self):
+        """Test marking endpoints as unhealthy/healthy."""
+        configs = [ModelConfig(url="http://server1:8000", name="model1")]
+        
+        manager = ModelManager(configs)
+        endpoint = manager.endpoints[0]
+        
+        assert endpoint.is_healthy is True
+        assert endpoint.error_count == 0
+        
+        # Mark unhealthy
+        manager.mark_unhealthy(endpoint)
+        assert endpoint.is_healthy is False
+        assert endpoint.error_count == 1
+        
+        # Mark healthy again
+        manager.mark_healthy(endpoint)
+        assert endpoint.is_healthy is True
+        assert endpoint.error_count == 1  # Error count not reset
+    
+    def test_get_statistics(self):
+        """Test getting endpoint statistics."""
+        configs = [
+            ModelConfig(url="http://server1:8000", name="model1"),
+            ModelConfig(url="http://server2:8000", name="model2"),
+        ]
+        
+        manager = ModelManager(configs)
+        
+        # Simulate some requests
+        ep1 = manager.endpoints[0]
+        ep2 = manager.endpoints[1]
+        
+        ep1.request_count = 10
+        ep1.error_count = 2
+        ep2.request_count = 15
+        ep2.error_count = 1
+        
+        stats = manager.get_statistics()
+        
+        assert stats["total_endpoints"] == 2
+        assert stats["healthy_endpoints"] == 2
+        assert stats["total_requests"] == 25
+        assert stats["total_errors"] == 3
+        
+        # Check individual endpoint stats
+        ep1_stats = stats["endpoints"][0]
+        assert ep1_stats["name"] == "model1"
+        assert ep1_stats["request_count"] == 10
+        assert ep1_stats["error_count"] == 2
+        assert ep1_stats["error_rate"] == 0.2
+    
+    def test_reset_statistics(self):
+        """Test resetting statistics."""
+        configs = [
+            ModelConfig(url="http://server1:8000", name="model1"),
+            ModelConfig(url="http://server2:8000", name="model2"),
+        ]
+        
+        manager = ModelManager(configs)
+        
+        # Set some counts
+        manager.endpoints[0].request_count = 10
+        manager.endpoints[0].error_count = 2
+        manager.endpoints[1].request_count = 15
+        manager.endpoints[1].error_count = 3
+        
+        # Reset
+        manager.reset_statistics()
+        
+        # Verify all reset
+        for endpoint in manager.endpoints:
+            assert endpoint.request_count == 0
+            assert endpoint.error_count == 0

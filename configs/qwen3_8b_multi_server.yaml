@@ -1,41 +1,49 @@
-# Configuration for multi-server parallel generation
-model_config:
-  model: "Qwen/Qwen3-8B"
-  temperature: 0.6
-  top_p: 0.95
-  max_tokens: 32768
-  max_model_len: 32768
-  gpu_memory_utilization: 0.9
-  tensor_parallel_size: 1  # Each server uses 1 GPUs
+# Configuration for multiple vLLM servers with Qwen models
 
-generation_config:
-  batch_size: 8
-  num_repeats: 16
-  repeat_strategy: "independent"
-  error_handling: "retry"
+data:
+  input_path: "data/large_dataset.parquet"
+  output_path: "data/qwen_responses.parquet"
+  input_column: "prompt"
+  output_column: "completion"
+  # Filter specific rows
+  filter_condition: "category == 'technical' and difficulty >= 3"
+  limit: 10000
+  shuffle: true
+
+models:
+  # Multiple Qwen model endpoints for load balancing
+  - url: "http://gpu-server-1:8000"
+    name: "qwen3-8b-server-1"
+  - url: "http://gpu-server-2:8000"
+    name: "qwen3-8b-server-2"
+  - url: "http://gpu-server-3:8000"
+    name: "qwen3-8b-server-3"
+
+generation:
+  num_samples: 1
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 40
+  max_tokens: 2048
+  presence_penalty: 0.1
+  frequency_penalty: 0.1
+
+processing:
+  batch_size: 128
+  num_workers: 6  # Distribute across 3 servers with 2 workers each
+  checkpoint_interval: 100
+  checkpoint_dir: "./checkpoints/qwen_run"
+  resume: false
+
+retry:
   max_retries: 3
-  checkpoint_frequency: 25
+  retry_delay: 1.0
+  timeout: 300
+  backoff_factor: 2.0
 
-data_config:
-  question_column: "problem"
-  output_format: "nested"
-  output_column_prefix: "response"
-  use_chat_template: true
-#  system_prompt: "You are a helpful AI assistant."
-
-parallel_config:
-  parallel_mode: "multi_server"
-  num_workers: 8
-  worker_gpus: [0, 1, 2, 3, 4, 5, 6, 7]  # 8 GPUs total, 1 per worker
-  sharding_strategy: "balanced"
-  ports: 2333
-  dynamic_batching: true
-  result_aggregation: "sequential"
-  worker_failure_mode: "retry"
-  max_worker_retries: 5
-
-logging_config:
+logging:
   level: "INFO"
-  save_metadata: true
-  track_token_usage: true
-  progress_aggregation: true
+  file: "logs/qwen_generation.log"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}"
+  rotation: "1 day"
+  retention: "14 days"
