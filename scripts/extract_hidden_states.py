@@ -50,12 +50,13 @@ def apply_chat_template(strings, tokenizer):
         messages = [{"role": "user", "content": text}]
         
         if hasattr(tokenizer, 'apply_chat_template'):
-            templated =  tokenizer.apply_chat_template(
+            templated = tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
                 enable_thinking=True
             )
+            templated = templated + "<think>\n\n"
         else:
             # Fallback if no chat template
             templated = text
