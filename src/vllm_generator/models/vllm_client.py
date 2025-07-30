@@ -125,7 +125,7 @@ class VLLMClient:
             if "chat_template_kwargs" not in extra_body:
                 extra_body["chat_template_kwargs"] = {}
             extra_body["chat_template_kwargs"]["enable_thinking"] = self.generation_config.enable_thinking
-            self.logger.info(f"Setting enable_thinking to {self.generation_config.enable_thinking}")
+            self.logger.debug(f"Setting enable_thinking to {self.generation_config.enable_thinking}")
         
         # Merge with any custom extra_body from config
         if self.generation_config.extra_body:
