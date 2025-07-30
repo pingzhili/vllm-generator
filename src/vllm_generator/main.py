@@ -292,8 +292,10 @@ def main():
         data_config = config.get("data_config", {})
         if "question_column" in data_config:
             args.question_column = data_config.pop("question_column")
+            logger.info(f"Question column: {args.question_column}")
         if "output_format" in data_config:
             args.output_format = data_config.pop("output_format")
+            logger.info(f"Output format: {args.output_format}")
         result = manager.run(
             input_path=args.input,
             output_path=str(output_path),
