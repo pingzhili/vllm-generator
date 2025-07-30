@@ -220,7 +220,7 @@ def main():
             logger.info(f"Loading configuration from {args.config_file}")
             file_config = ConfigParser.load_config(args.config_file)
             config = ConfigParser.merge_configs(config, file_config)
-        
+
         # 2. Load from environment variables
         env_config = ConfigParser.load_from_env()
         if env_config:
@@ -251,6 +251,8 @@ def main():
                 for msg in messages:
                     logger.error(f"  {field}: {msg}")
             sys.exit(1)
+        else:
+            logger.info(f"Final config: {config}")
         
         # Handle special commands
         if args.dry_run:
