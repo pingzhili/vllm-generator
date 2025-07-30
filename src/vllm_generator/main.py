@@ -227,9 +227,9 @@ def main():
             logger.info("Loading configuration from environment variables")
             config = ConfigParser.merge_configs(config, env_config)
         
-        # 3. Override with command line arguments
+        # 3. Override the command line arguments
         cli_config = create_config_from_args(vars(args))
-        config = ConfigParser.merge_configs(config, cli_config)
+        config = ConfigParser.merge_configs(cli_config, config)
         
         # Add model args if provided
         if args.model_args:
