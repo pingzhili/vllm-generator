@@ -7,7 +7,7 @@
 # Configuration
 CONFIG_FILE="configs/qwen3-thinking.yaml"
 NUM_SPLITS=8
-BASE_PORT=8000
+BASE_PORT=8010
 
 # Function to run a split
 run_split() {
