@@ -119,7 +119,8 @@ class VLLMClient:
             extra_body["chat_template_kwargs"] = {
                 "enable_thinking": self.generation_config.enable_thinking
             }
-        
+            self.logger.info(f"Setting up thinking as {self.generation_config.enable_thinking}")
+
         # Add top_k if it's not -1 (disabled)
         if self.generation_config.top_k > 0:
             extra_body["top_k"] = self.generation_config.top_k
