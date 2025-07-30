@@ -2,7 +2,7 @@
 
 # Start vLLM servers on 8 GPUs with ports 8000-8007
 MODEL_NAME="Qwen/Qwen3-8B"
-VLLM_ARGS=" --reasoning-parser deepseek_r1"
+VLLM_ARGS=" --reasoning-parser qwen3"
 #VLLM_ARGS=""
 
 echo "Starting vLLM servers on 8 GPUs..."
