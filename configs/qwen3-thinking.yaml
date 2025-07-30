@@ -6,8 +6,8 @@
 # ... etc.
 
 data:
-  input_path: "/root/open-math-reasoning/sample_1k.parquet"
-  output_path: "/root/open-math-reasoning/sample_1k_cot_res_qwen3_8b_rep_32.parquet"
+  input_path: "/root/open-math-reasoning/sample_8.parquet"
+  output_path: "/root/open-math-reasoning/sample_8_cot_res_qwen3_8b_rep_32.parquet"
   input_column: "problem"
   output_column: "response"
 

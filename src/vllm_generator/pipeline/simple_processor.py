@@ -56,43 +56,50 @@ class SimpleProcessor:
                     # Simulate processing
                     time.sleep(0.01)
                     if self.config.generation.num_samples == 1:
-                        results = [f"Dry run response for: {prompt[:50]}..."]
+                        results = [(f"Dry run response for: {prompt[:50]}...", "Dry run thinking...")]
                     else:
-                        results = [f"Dry run sample {i+1}" for i in range(self.config.generation.num_samples)]
+                        results = [(f"Dry run sample {i+1}", f"Dry run thinking {i+1}") for i in range(self.config.generation.num_samples)]
                 else:
                     # Generate real responses
                     if self.config.generation.num_samples == 1:
                         # Single sample
                         try:
                             response = vllm_client.generate(prompt)
-                            text = response.get("choices", [{}])[0].get("text", "")
-                            results = [text]
+                            choice = response.get("choices", [{}])[0]
+                            text = choice.get("text", "")
+                            thinking_text = choice.get("thinking_text", "")
+                            results = [(text, thinking_text)]
                         except Exception as e:
                             self.logger.error(f"Generation failed for item {idx}: {e}")
-                            results = [""]
+                            results = [("", "")]
                     else:
                         # Multiple samples
                         results = []
                         for sample_idx in range(self.config.generation.num_samples):
                             try:
                                 response = vllm_client.generate(prompt, sample_idx=sample_idx)
-                                text = response.get("choices", [{}])[0].get("text", "")
-                                results.append(text)
+                                choice = response.get("choices", [{}])[0]
+                                text = choice.get("text", "")
+                                thinking_text = choice.get("thinking_text", "")
+                                results.append((text, thinking_text))
                             except Exception as e:
                                 self.logger.error(f"Generation failed for item {idx}, sample {sample_idx}: {e}")
-                                results.append("")
+                                results.append(("", ""))
                 
                 # Store results
                 if self.config.generation.num_samples == 1:
                     # Single response per input
                     result_row = row.to_dict()
-                    result_row[self.config.data.output_column] = results[0]
+                    response_text, thinking_text = results[0]
+                    result_row[self.config.data.output_column] = response_text
+                    result_row["thinking_text"] = thinking_text
                     all_results.append(result_row)
                 else:
                     # Multiple responses per input
-                    for sample_idx, response_text in enumerate(results):
+                    for sample_idx, (response_text, thinking_text) in enumerate(results):
                         result_row = row.to_dict()
                         result_row[self.config.data.output_column] = response_text
+                        result_row["thinking_text"] = thinking_text
                         result_row["sample_idx"] = sample_idx
                         all_results.append(result_row)
                 

@@ -131,8 +131,7 @@ class VLLMClient:
         # Add extra_body to params if not empty
         if extra_body:
             params["extra_body"] = extra_body
-            self.logger.info(f"Using extra_body: {extra_body}")
-        
+
         return params
     
     @retry(
@@ -156,13 +155,13 @@ class VLLMClient:
         params = self._prepare_chat_completion_params(prompt, temperature, sample_idx)
         
         try:
-            self.logger.info(params)
             response = self.client.chat.completions.create(**params)
             
             # Convert OpenAI response to our expected format
             return {
                 "choices": [{
                     "text": response.choices[0].message.content or "",
+                    "thinking_text": response.choices[0].message.reasoning_content or "",
                     "finish_reason": response.choices[0].finish_reason,
                     "index": response.choices[0].index
                 }],
