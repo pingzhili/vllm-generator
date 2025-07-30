@@ -257,6 +257,8 @@ class VLLMServer:
         
         if sampling_params is None:
             sampling_params = self.config.to_sampling_params()
+
+        logger.info(f"Sampling parameters: {sampling_params}")
         
         results = []
         for prompt in prompts:
