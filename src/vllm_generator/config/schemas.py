@@ -50,7 +50,7 @@ class GenerationConfig(BaseModel):
     seed: Optional[int] = Field(None, description="Random seed")
     presence_penalty: float = Field(0.0, description="Presence penalty")
     frequency_penalty: float = Field(0.0, description="Frequency penalty")
-    enable_thinking: bool = Field(False, description="Enable thinking mode for reasoning models")
+    enable_thinking: bool = Field(True, description="Enable thinking mode for reasoning models")
     extra_body: Optional[Dict[str, Any]] = Field(None, description="Additional parameters for vLLM extra_body")
     
     @field_validator("temperature")
