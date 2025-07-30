@@ -289,12 +289,17 @@ def main():
         )
         
         # Run pipeline
+        data_config = config.get("data_config", {})
+        if "question_column" in data_config:
+            args.question_column = data_config["question_column"]
+        if "output_format" in data_config:
+            args.output_format = data_config["output_format"]
         result = manager.run(
             input_path=args.input,
             output_path=str(output_path),
             question_column=args.question_column,
             output_format=args.output_format,
-            **config.get("data_config", {})
+            **data_config
         )
         
         # Print summary
