@@ -32,6 +32,10 @@ generation:
   top_p: 0.95
   top_k: 20
   max_tokens: 32768
+  enable_thinking: false  # Set to true to enable thinking mode for reasoning
+  # You can also add custom extra_body parameters:
+  # extra_body:
+  #   custom_param: value
 
 
 processing:

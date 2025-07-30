@@ -207,6 +207,11 @@ def add_generate_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         help="Random seed for reproducibility"
     )
+    gen_group.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Enable thinking mode for reasoning models"
+    )
     
     # Processing options
     proc_group = parser.add_argument_group("Processing Options")

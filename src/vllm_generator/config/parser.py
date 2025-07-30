@@ -62,6 +62,8 @@ class ConfigParser:
             config_data["generation"]["stop_sequences"] = args["stop_sequences"]
         if args.get("seed") is not None:
             config_data["generation"]["seed"] = args["seed"]
+        if args.get("enable_thinking") is not None:
+            config_data["generation"]["enable_thinking"] = args["enable_thinking"]
         
         # Processing parameters
         if args.get("batch_size") is not None:

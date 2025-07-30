@@ -1,7 +1,7 @@
 """vLLM client wrapper for API interactions."""
 
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import httpx
 from tenacity import (
     retry,
@@ -110,6 +110,32 @@ class VLLMClient:
         
         if self.generation_config.seed is not None:
             request["seed"] = self.generation_config.seed
+        
+        # Prepare extra_body
+        extra_body = {}
+        
+        # Add enable_thinking to chat_template_kwargs
+        if self.generation_config.enable_thinking is not None:
+            extra_body["chat_template_kwargs"] = {
+                "enable_thinking": self.generation_config.enable_thinking
+            }
+        
+        # Add top_k if it's not -1 (disabled)
+        if self.generation_config.top_k > 0:
+            extra_body["top_k"] = self.generation_config.top_k
+        
+        # Merge with any custom extra_body from config
+        if self.generation_config.extra_body:
+            for key, value in self.generation_config.extra_body.items():
+                if key == "chat_template_kwargs" and "chat_template_kwargs" in extra_body:
+                    # Merge chat_template_kwargs
+                    extra_body["chat_template_kwargs"].update(value)
+                else:
+                    extra_body[key] = value
+        
+        # Add extra_body to request if not empty
+        if extra_body:
+            request["extra_body"] = extra_body
         
         return request
     

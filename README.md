@@ -109,6 +109,9 @@ generation:
   seed: 42
   presence_penalty: 0.1
   frequency_penalty: 0.1
+  enable_thinking: false  # Enable thinking mode for reasoning models
+  extra_body:  # Additional vLLM parameters
+    custom_param: "value"
 
 processing:
   batch_size: 64
@@ -145,6 +148,7 @@ Key options:
 - `--model-urls`: Multiple vLLM server URLs
 - `--num-samples`: Number of samples per input
 - `--temperature`: Sampling temperature
+- `--enable-thinking`: Enable thinking mode for reasoning models
 - `--batch-size`: Batch size for processing
 - `--num-workers`: Number of parallel workers
 - `--resume`: Resume from checkpoint
@@ -203,6 +207,35 @@ models:
     api_key: "${API_KEY}"  # Can use environment variables
     headers:
       X-Custom-Header: "value"
+```
+
+### Reasoning Mode with Thinking
+
+For models that support reasoning with thinking (like DeepSeek-R1), you can enable thinking mode:
+
+```bash
+# Via CLI
+python -m vllm_generator generate \
+    --config config.yaml \
+    --enable-thinking
+
+# Via configuration
+generation:
+  enable_thinking: true
+  max_tokens: 8192  # Reasoning may need more tokens
+  top_k: 20
+  presence_penalty: 1.5
+```
+
+The `enable_thinking` parameter is passed to vLLM via `extra_body` as:
+```json
+{
+  "extra_body": {
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    }
+  }
+}
 ```
 
 ## Output Format
