@@ -1,36 +1,42 @@
 # Configuration for multiple vLLM servers with Qwen models
 
 data:
-  input_path: "data/large_dataset.parquet"
-  output_path: "data/qwen_responses.parquet"
-  input_column: "prompt"
-  output_column: "completion"
-  # Filter specific rows
-  filter_condition: "category == 'technical' and difficulty >= 3"
-  limit: 10000
-  shuffle: true
+  input_path: "/root/open-math-reasoning/sample_10.parquet"
+  output_path: "/root/open-math-reasoning/sample_10_results_repeat_.parquet"
+  input_column: "problem"
+  output_column: "response"
 
 models:
   # Multiple Qwen model endpoints for load balancing
-  - url: "http://gpu-server-1:8000"
+  - url: "http://localhost:8000"
+    name: "qwen3-8b-server-0"
+  - url: "http://localhost:8001"
     name: "qwen3-8b-server-1"
-  - url: "http://gpu-server-2:8000"
+  - url: "http://localhost:8002"
     name: "qwen3-8b-server-2"
-  - url: "http://gpu-server-3:8000"
+  - url: "http://localhost:8003"
     name: "qwen3-8b-server-3"
+  - url: "http://localhost:8004"
+    name: "qwen3-8b-server-4"
+  - url: "http://localhost:8005"
+    name: "qwen3-8b-server-5"
+  - url: "http://localhost:8006"
+    name: "qwen3-8b-server-6"
+  - url: "http://localhost:8007"
+    name: "qwen3-8b-server-7"
+
 
 generation:
-  num_samples: 1
-  temperature: 0.7
-  top_p: 0.9
-  top_k: 40
-  max_tokens: 2048
-  presence_penalty: 0.1
-  frequency_penalty: 0.1
+  num_samples: 8
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  max_tokens: 32768
+
 
 processing:
-  batch_size: 128
-  num_workers: 6  # Distribute across 3 servers with 2 workers each
+  batch_size: 4
+  num_workers: 16
   checkpoint_interval: 100
   checkpoint_dir: "./checkpoints/qwen_run"
   resume: false
