@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 __author__ = "Your Name"
 
-from .pipeline import Pipeline
+from .pipeline import GenerationPipeline
 from .config import Config
 
-__all__ = ["Pipeline", "Config", "__version__"]
+__all__ = ["GenerationPipeline", "Config", "__version__"]

@@ -43,9 +43,9 @@ class ConfigParser:
         
         # Model configuration
         if args.get("model_url"):
-            config_data["models"] = [{"url": args["model_url"]}]
-        elif args.get("model_urls"):
-            config_data["models"] = [{"url": url} for url in args["model_urls"]]
+            config_data["model"] = {"url": args["model_url"]}
+        elif args.get("port"):
+            config_data["model"] = {"url": f"http://localhost:{args['port']}"}
         
         # Generation parameters
         if args.get("num_samples") is not None:
@@ -68,12 +68,14 @@ class ConfigParser:
         # Processing parameters
         if args.get("batch_size") is not None:
             config_data["processing"]["batch_size"] = args["batch_size"]
-        if args.get("num_workers") is not None:
-            config_data["processing"]["num_workers"] = args["num_workers"]
         if args.get("checkpoint_dir"):
             config_data["processing"]["checkpoint_dir"] = args["checkpoint_dir"]
         if args.get("resume"):
             config_data["processing"]["resume"] = args["resume"]
+        if args.get("split_id") is not None:
+            config_data["processing"]["split_id"] = args["split_id"]
+        if args.get("num_splits") is not None:
+            config_data["processing"]["num_splits"] = args["num_splits"]
         
         # Retry parameters
         if args.get("timeout") is not None:
@@ -120,15 +122,17 @@ class ConfigParser:
                 "input_column": kwargs.get("input_column", "question"),
                 "output_column": kwargs.get("output_column", "response"),
             },
-            "models": [{"url": model_url}],
+            "model": {"url": model_url},
             "generation": {
                 "num_samples": kwargs.get("num_samples", 1),
                 "temperature": kwargs.get("temperature", 1.0),
                 "max_tokens": kwargs.get("max_tokens", 512),
+                "enable_thinking": kwargs.get("enable_thinking", False),
             },
             "processing": {
                 "batch_size": kwargs.get("batch_size", 32),
-                "num_workers": kwargs.get("num_workers", 1),
+                "split_id": kwargs.get("split_id"),
+                "num_splits": kwargs.get("num_splits"),
             }
         }
         

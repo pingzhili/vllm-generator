@@ -1,7 +1,5 @@
 """Model module for vLLM interactions."""
 
-from .vllm_wrapper import VLLMClient
-from .config import ModelManager, ModelEndpoint
-from .generation import GenerationManager
+from .vllm_client import VLLMClient
 
-__all__ = ["VLLMClient", "ModelManager", "ModelEndpoint", "GenerationManager"]
+__all__ = ["VLLMClient"]

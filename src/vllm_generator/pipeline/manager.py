@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 
 from .batch_processor import BatchProcessor
 from ..config.schemas import Config
-from ..models import GenerationManager
+from ..models import VLLMClient
 from ..utils import get_logger, setup_logger
 
 
@@ -21,27 +21,26 @@ class GenerationPipeline:
         
         # Initialize components
         self.batch_processor = BatchProcessor(config)
-        self.generation_manager = None
+        self.vllm_client = None
     
-    async def initialize(self) -> None:
+    def initialize(self) -> None:
         """Initialize pipeline components."""
         self.logger.info("Initializing pipeline...")
         
-        # Create generation manager
-        self.generation_manager = GenerationManager(self.config)
-        
-        # Health check all endpoints
-        health_status = await self.generation_manager.health_check_all()
-        
-        healthy_count = sum(1 for status in health_status.values() if status)
-        self.logger.info(
-            f"Health check complete: {healthy_count}/{len(health_status)} endpoints healthy"
+        # Create vLLM client
+        self.vllm_client = VLLMClient(
+            self.config.model,
+            self.config.generation,
+            self.config.retry
         )
         
-        if healthy_count == 0:
-            raise RuntimeError("No healthy endpoints available")
+        # Health check
+        if self.vllm_client.health_check():
+            self.logger.info(f"vLLM server at {self.config.model.url} is healthy")
+        else:
+            raise RuntimeError(f"vLLM server at {self.config.model.url} is not healthy")
     
-    async def run(
+    def run(
         self,
         dry_run: bool = False,
         progress_bar: bool = True
@@ -49,18 +48,17 @@ class GenerationPipeline:
         """Run the generation pipeline."""
         try:
             # Initialize if not already done
-            if self.generation_manager is None:
-                await self.initialize()
+            if self.vllm_client is None:
+                self.initialize()
             
             # Process data
             self.logger.info("Starting data processing...")
             
-            async with self.generation_manager:
-                results = await self.batch_processor.process(
-                    self.generation_manager,
-                    dry_run=dry_run,
-                    progress_bar=progress_bar
-                )
+            results = self.batch_processor.process(
+                self.vllm_client,
+                dry_run=dry_run,
+                progress_bar=progress_bar
+            )
             
             self.logger.info("Pipeline completed successfully")
             return results
@@ -68,8 +66,12 @@ class GenerationPipeline:
         except Exception as e:
             self.logger.error(f"Pipeline failed: {e}")
             raise
+        finally:
+            # Clean up
+            if self.vllm_client:
+                self.vllm_client.close()
     
-    async def validate(self) -> bool:
+    def validate(self) -> bool:
         """Validate pipeline configuration."""
         self.logger.info("Validating pipeline configuration...")
         
@@ -89,35 +91,35 @@ class GenerationPipeline:
         
         # Initialize and check models
         try:
-            await self.initialize()
+            self.initialize()
         except Exception as e:
             self.logger.error(f"Failed to initialize models: {e}")
             return False
+        finally:
+            if self.vllm_client:
+                self.vllm_client.close()
         
         self.logger.info("Configuration validation passed")
         return True
     
-    async def list_models(self) -> Dict[str, List[str]]:
-        """List available models from all endpoints."""
-        if self.generation_manager is None:
-            await self.initialize()
+    def list_models(self) -> List[str]:
+        """List available models from the endpoint."""
+        if self.vllm_client is None:
+            self.initialize()
         
-        model_lists = {}
-        
-        async with self.generation_manager:
-            for endpoint in self.generation_manager.model_manager.endpoints:
-                client = self.generation_manager.clients[endpoint.url]
-                models = await client.list_models()
-                model_lists[endpoint.name] = models
-        
-        return model_lists
+        try:
+            models = self.vllm_client.list_models()
+            return models
+        finally:
+            if self.vllm_client:
+                self.vllm_client.close()
 
 
-async def run_pipeline(
+def run_pipeline(
     config: Config,
     dry_run: bool = False,
     progress_bar: bool = True
 ) -> Dict[str, Any]:
     """Convenience function to run the pipeline."""
     pipeline = GenerationPipeline(config)
-    return await pipeline.run(dry_run=dry_run, progress_bar=progress_bar)
+    return pipeline.run(dry_run=dry_run, progress_bar=progress_bar)

@@ -1,6 +1,5 @@
 """Main entry point for vLLM generator."""
 
-import asyncio
 import argparse
 import sys
 from pathlib import Path
@@ -27,6 +26,9 @@ Examples:
 
   # Generate with multiple samples
   vllm-generator generate -c config.yaml --num-samples 5 --temperature 0.8
+
+  # Generate with data splitting for parallel processing
+  vllm-generator generate -c config.yaml --split-id 1 --num-splits 4
 
   # Resume from checkpoint
   vllm-generator generate -c config.yaml --resume
@@ -88,7 +90,7 @@ Examples:
     # List models command
     list_parser = subparsers.add_parser(
         "list-models",
-        help="List available models from vLLM servers"
+        help="List available models from vLLM server"
     )
     list_parser.add_argument(
         "--model-url", "-m",
@@ -96,14 +98,9 @@ Examples:
         help="vLLM server URL"
     )
     list_parser.add_argument(
-        "--model-urls",
-        nargs="+",
-        help="Multiple vLLM server URLs"
-    )
-    list_parser.add_argument(
         "--config", "-c",
         type=Path,
-        help="Configuration file with model URLs"
+        help="Configuration file with model URL"
     )
     
     return parser
@@ -165,9 +162,9 @@ def add_generate_args(parser: argparse.ArgumentParser) -> None:
         help="vLLM server URL (e.g., http://localhost:8000)"
     )
     model_group.add_argument(
-        "--model-urls",
-        nargs="+",
-        help="Multiple vLLM server URLs for parallel processing"
+        "--port", "-p",
+        type=int,
+        help="vLLM server port (shorthand for http://localhost:PORT)"
     )
     
     # Generation parameters
@@ -221,9 +218,14 @@ def add_generate_args(parser: argparse.ArgumentParser) -> None:
         help="Batch size for processing (default: 32)"
     )
     proc_group.add_argument(
-        "--num-workers", "-w",
+        "--split-id",
         type=int,
-        help="Number of parallel workers (default: 1)"
+        help="Split ID to process (1-indexed, use with --num-splits)"
+    )
+    proc_group.add_argument(
+        "--num-splits",
+        type=int,
+        help="Total number of splits for parallel processing"
     )
     proc_group.add_argument(
         "--timeout",
@@ -262,7 +264,7 @@ def add_generate_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-async def generate_command(args: argparse.Namespace) -> int:
+def generate_command(args: argparse.Namespace) -> int:
     """Execute generate command."""
     logger = get_logger("CLI")
     
@@ -275,16 +277,21 @@ async def generate_command(args: argparse.Namespace) -> int:
             config = ConfigParser.merge_cli_args(config, cli_args)
         else:
             # Create config from CLI arguments
-            if not all([args.input, args.output, (args.model_url or args.model_urls)]):
+            if not all([args.input, args.output, (args.model_url or args.port)]):
                 logger.error(
-                    "Either provide a config file or specify --input, --output, and --model-url"
+                    "Either provide a config file or specify --input, --output, and --model-url (or --port)"
                 )
                 return 1
+            
+            # Handle port shorthand
+            model_url = args.model_url
+            if not model_url and args.port:
+                model_url = f"http://localhost:{args.port}"
             
             config = ConfigParser.create_default_config(
                 input_path=str(args.input),
                 output_path=str(args.output),
-                model_url=args.model_url or args.model_urls[0],
+                model_url=model_url,
                 **vars(args)
             )
         
@@ -295,13 +302,17 @@ async def generate_command(args: argparse.Namespace) -> int:
         
         # Run pipeline
         pipeline = GenerationPipeline(config)
-        results = await pipeline.run(
+        results = pipeline.run(
             dry_run=args.dry_run,
             progress_bar=args.progress_bar
         )
         
         # Print summary
-        logger.info(f"✓ Generated {results['total_processed']} responses")
+        if 'total_prompts' in results:
+            logger.info(f"✓ Processed {results['total_prompts']} prompts")
+            logger.info(f"✓ Generated {results['total_responses']} responses")
+        else:
+            logger.info(f"✓ Generated {results.get('total_processed', 0)} responses")
         logger.info(f"✓ Processing time: {results['processing_time']:.2f}s")
         logger.info(f"✓ Throughput: {results['prompts_per_second']:.2f} prompts/s")
         
@@ -312,7 +323,7 @@ async def generate_command(args: argparse.Namespace) -> int:
         return 1
 
 
-async def validate_command(args: argparse.Namespace) -> int:
+def validate_command(args: argparse.Namespace) -> int:
     """Execute validate command."""
     logger = get_logger("CLI")
     
@@ -320,7 +331,7 @@ async def validate_command(args: argparse.Namespace) -> int:
         config = ConfigParser.from_yaml(args.config)
         pipeline = GenerationPipeline(config)
         
-        if await pipeline.validate():
+        if pipeline.validate():
             logger.info("✓ Configuration is valid")
             return 0
         else:
@@ -332,21 +343,19 @@ async def validate_command(args: argparse.Namespace) -> int:
         return 1
 
 
-async def list_models_command(args: argparse.Namespace) -> int:
+def list_models_command(args: argparse.Namespace) -> int:
     """Execute list-models command."""
     logger = get_logger("CLI")
     
     try:
-        # Determine model URLs
+        # Determine model URL
         if args.config:
             config = ConfigParser.from_yaml(args.config)
-            model_urls = [str(m.url) for m in config.models]
-        elif args.model_urls:
-            model_urls = args.model_urls
+            model_url = str(config.model.url)
         elif args.model_url:
-            model_urls = [args.model_url]
+            model_url = args.model_url
         else:
-            logger.error("Provide --model-url, --model-urls, or --config")
+            logger.error("Provide --model-url or --config")
             return 1
         
         # Create minimal config
@@ -355,22 +364,21 @@ async def list_models_command(args: argparse.Namespace) -> int:
                 "input_path": "dummy.parquet",
                 "output_path": "dummy_out.parquet"
             },
-            "models": [{"url": url} for url in model_urls]
+            "model": {"url": model_url}
         }
         config = Config(**config_data)
         
         # List models
         pipeline = GenerationPipeline(config)
-        model_lists = await pipeline.list_models()
+        models = pipeline.list_models()
         
         # Display results
-        for endpoint, models in model_lists.items():
-            logger.info(f"\nEndpoint: {endpoint}")
-            if models:
-                for model in models:
-                    logger.info(f"  - {model}")
-            else:
-                logger.info("  No models found")
+        logger.info(f"\nEndpoint: {model_url}")
+        if models:
+            for model in models:
+                logger.info(f"  - {model}")
+        else:
+            logger.info("  No models found")
         
         return 0
     
@@ -379,14 +387,14 @@ async def list_models_command(args: argparse.Namespace) -> int:
         return 1
 
 
-async def async_main(args: argparse.Namespace) -> int:
-    """Async main function."""
+def run_command(args: argparse.Namespace) -> int:
+    """Run the appropriate command."""
     if args.command == "generate":
-        return await generate_command(args)
+        return generate_command(args)
     elif args.command == "validate":
-        return await validate_command(args)
+        return validate_command(args)
     elif args.command == "list-models":
-        return await list_models_command(args)
+        return list_models_command(args)
     else:
         parser = create_parser()
         parser.print_help()
@@ -403,8 +411,8 @@ def main() -> int:
         import os
         os.environ["NO_COLOR"] = "1"
     
-    # Run async main
-    return asyncio.run(async_main(args))
+    # Run command
+    return run_command(args)
 
 
 if __name__ == "__main__":

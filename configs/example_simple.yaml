@@ -6,9 +6,8 @@ data:
   input_column: "question"
   output_column: "response"
 
-models:
-  - url: "http://localhost:8000"
-    name: "local_vllm"
+model:
+  url: "http://localhost:8000"
 
 generation:
   num_samples: 1
@@ -17,7 +16,6 @@ generation:
 
 processing:
   batch_size: 32
-  num_workers: 1
 
 logging:
   level: "INFO"

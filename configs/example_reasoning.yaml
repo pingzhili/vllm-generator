@@ -6,9 +6,8 @@ data:
   input_column: "problem"
   output_column: "solution"
 
-models:
-  - url: "http://localhost:8000"
-    name: "qwen3-reasoning"
+model:
+  url: "http://localhost:8000"
 
 generation:
   num_samples: 1
@@ -27,7 +26,6 @@ generation:
 
 processing:
   batch_size: 8
-  num_workers: 1
   checkpoint_interval: 50
 
 retry:

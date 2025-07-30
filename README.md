@@ -1,17 +1,17 @@
 # vLLM Generator
 
-A scalable and efficient data generation pipeline for processing datasets using vLLM models. Supports batch processing, multiple model endpoints, repeated sampling, and fault-tolerant execution with checkpointing.
+A scalable data generation pipeline for processing datasets through vLLM models with support for parallel processing via data splitting.
 
 ## Features
 
-- 🚀 **High Performance**: Async/await based architecture with parallel processing
-- 🔄 **Multiple Sampling**: Generate multiple responses per input with temperature scheduling
-- ⚖️ **Load Balancing**: Distribute requests across multiple vLLM servers
-- 💾 **Checkpointing**: Resume interrupted jobs from the last checkpoint
-- 📊 **Progress Tracking**: Real-time progress bars and performance metrics
-- 🛡️ **Fault Tolerant**: Automatic retries with exponential backoff
-- 📝 **Comprehensive Logging**: Structured logging with loguru
-- 🎯 **Flexible Configuration**: YAML configs with CLI override support
+- **Parquet I/O**: Load questions from parquet files and save responses
+- **vLLM Integration**: Send prompts to served vLLM models via HTTP API
+- **Repeated Sampling**: Generate multiple responses per input with temperature scheduling
+- **Parallel Processing**: Split large datasets for parallel processing across multiple instances
+- **Checkpointing**: Resume interrupted processing from checkpoints
+- **Progress Tracking**: Real-time progress bars with loguru integration
+- **Flexible Configuration**: YAML-based configuration with CLI overrides
+- **Thinking Mode**: Support for reasoning models with `enable_thinking` parameter
 
 ## Installation
 
@@ -19,297 +19,160 @@ A scalable and efficient data generation pipeline for processing datasets using 
 pip install -e .
 ```
 
-Or install dependencies directly:
-
-```bash
-pip install -r requirements.txt
-```
-
 ## Quick Start
 
-### 1. Basic Usage
+### 1. Start vLLM Server
 
 ```bash
-# Generate responses for a parquet file
-python -m vllm_generator generate \
-    --input data/questions.parquet \
-    --output data/responses.parquet \
-    --model-url http://localhost:8000 \
-    --temperature 0.7 \
-    --max-tokens 512
+vllm serve your-model --port 8000
 ```
 
-### 2. Using Configuration File
+### 2. Basic Usage
 
 ```bash
-# Generate using a YAML configuration
-python -m vllm_generator generate --config configs/example_simple.yaml
+# Using configuration file
+vllm-generator generate --config configs/example_simple.yaml
 
-# Override config parameters via CLI
-python -m vllm_generator generate \
-    --config configs/example_simple.yaml \
-    --num-samples 3 \
-    --temperature 0.9
-```
-
-### 3. Multiple Samples per Input
-
-```yaml
-# configs/multi_sample.yaml
-generation:
-  num_samples: 5
-  temperature: [0.5, 0.7, 0.9, 1.1, 1.3]  # Different temperature for each sample
-```
-
-```bash
-python -m vllm_generator generate --config configs/multi_sample.yaml
-```
-
-### 4. Multiple vLLM Servers
-
-```bash
-# Distribute load across multiple servers
-python -m vllm_generator generate \
-    --input large_dataset.parquet \
+# Using CLI arguments
+vllm-generator generate \
+    --input data.parquet \
     --output results.parquet \
-    --model-urls http://gpu1:8000 http://gpu2:8000 http://gpu3:8000 \
-    --num-workers 6 \
-    --batch-size 128
+    --model-url http://localhost:8000 \
+    --num-samples 3 \
+    --temperature 0.8
+
+# Using port shorthand
+vllm-generator generate -c config.yaml --port 8001
 ```
+
+### 3. Parallel Processing with Data Splits
+
+For large datasets, split processing across multiple instances:
+
+```bash
+# Terminal 1: Process first quarter of data
+vllm-generator generate -c config.yaml --split-id 1 --num-splits 4 --port 8000
+
+# Terminal 2: Process second quarter
+vllm-generator generate -c config.yaml --split-id 2 --num-splits 4 --port 8001
+
+# Terminal 3: Process third quarter
+vllm-generator generate -c config.yaml --split-id 3 --num-splits 4 --port 8002
+
+# Terminal 4: Process fourth quarter
+vllm-generator generate -c config.yaml --split-id 4 --num-splits 4 --port 8003
+```
+
+Each split will create its own output file (e.g., `output-1-of-4.parquet`, `output-2-of-4.parquet`, etc.).
 
 ## Configuration
 
-### YAML Configuration Structure
+### Basic Configuration
 
 ```yaml
 data:
-  input_path: "data/questions.parquet"
-  output_path: "data/responses.parquet"
+  input_path: "questions.parquet"
+  output_path: "responses.parquet"
   input_column: "question"
   output_column: "response"
-  copy_columns: ["id", "metadata"]  # Additional columns to preserve
-  filter_condition: "category == 'science'"  # Optional pandas query
-  limit: 1000  # Optional row limit
-  shuffle: true  # Shuffle data before processing
 
-models:
-  - url: "http://localhost:8000"
-    name: "primary_model"
-    api_key: "optional-api-key"
-    headers:
-      Authorization: "Bearer token"
+model:
+  url: "http://localhost:8000"
 
 generation:
-  num_samples: 3
-  temperature: 0.8
-  top_p: 0.95
-  top_k: 50
-  max_tokens: 1024
-  stop_sequences: ["###", "END"]
-  seed: 42
-  presence_penalty: 0.1
-  frequency_penalty: 0.1
-  enable_thinking: false  # Enable thinking mode for reasoning models
-  extra_body:  # Additional vLLM parameters
-    custom_param: "value"
+  num_samples: 1
+  temperature: 1.0
+  max_tokens: 512
+  enable_thinking: false  # For reasoning models
 
 processing:
-  batch_size: 64
-  num_workers: 2
-  checkpoint_interval: 100
-  checkpoint_dir: "./checkpoints"
-  resume: false
-
-retry:
-  max_retries: 5
-  retry_delay: 2.0
-  timeout: 600
-  backoff_factor: 2.0
-
-logging:
-  level: "INFO"
-  file: "logs/generation.log"
-  rotation: "100 MB"
-  retention: "7 days"
+  batch_size: 32
 ```
 
-## CLI Commands
+### Advanced Features
 
-### Generate Command
-
-```bash
-python -m vllm_generator generate [OPTIONS]
-```
-
-Key options:
-- `--config`: Path to YAML configuration file
-- `--input/--output`: Input/output parquet file paths
-- `--model-url`: Single vLLM server URL
-- `--model-urls`: Multiple vLLM server URLs
-- `--num-samples`: Number of samples per input
-- `--temperature`: Sampling temperature
-- `--enable-thinking`: Enable thinking mode for reasoning models
-- `--batch-size`: Batch size for processing
-- `--num-workers`: Number of parallel workers
-- `--resume`: Resume from checkpoint
-- `--dry-run`: Test without making API calls
-
-### Validate Command
-
-```bash
-# Validate configuration file
-python -m vllm_generator validate --config config.yaml
-```
-
-### List Models Command
-
-```bash
-# List available models from vLLM servers
-python -m vllm_generator list-models --model-url http://localhost:8000
-```
-
-## Advanced Usage
-
-### Checkpointing and Resume
-
-```bash
-# First run - will save checkpoints
-python -m vllm_generator generate --config config.yaml
-
-# If interrupted, resume from last checkpoint
-python -m vllm_generator generate --config config.yaml --resume
-```
-
-### Data Filtering
-
-```yaml
-data:
-  filter_condition: "difficulty >= 3 and category == 'technical'"
-  limit: 10000
-  shuffle: true
-```
-
-### Temperature Scheduling
+#### Multiple Samples with Temperature Scheduling
 
 ```yaml
 generation:
   num_samples: 5
-  # Each sample uses a different temperature
-  temperature: [0.5, 0.7, 0.9, 1.1, 1.3]
+  temperature: [0.5, 0.7, 0.9, 1.0, 1.2]  # Different temperature per sample
 ```
 
-### Custom Headers and Authentication
+#### Enable Thinking Mode (for reasoning models)
 
 ```yaml
-models:
-  - url: "http://api.example.com/v1"
-    name: "api_endpoint"
-    api_key: "${API_KEY}"  # Can use environment variables
-    headers:
-      X-Custom-Header: "value"
-```
-
-### Reasoning Mode with Thinking
-
-For models that support reasoning with thinking (like DeepSeek-R1), you can enable thinking mode:
-
-```bash
-# Via CLI
-python -m vllm_generator generate \
-    --config config.yaml \
-    --enable-thinking
-
-# Via configuration
 generation:
   enable_thinking: true
-  max_tokens: 8192  # Reasoning may need more tokens
-  top_k: 20
-  presence_penalty: 1.5
+  max_tokens: 8192
 ```
 
-The `enable_thinking` parameter is passed to vLLM via `extra_body` as:
-```json
-{
-  "extra_body": {
-    "chat_template_kwargs": {
-      "enable_thinking": true
-    }
-  }
-}
+#### Data Splitting for Parallel Processing
+
+```yaml
+processing:
+  split_id: 1      # Which split to process (1-indexed)
+  num_splits: 4    # Total number of splits
 ```
 
-## Output Format
+## CLI Arguments
 
-### Single Sample Output
-```
-| question | response | id | metadata |
-|----------|----------|----|----------|
-| What is ML? | Machine learning is... | 1 | {...} |
+```bash
+vllm-generator generate --help
+
+Options:
+  --config, -c          Path to YAML configuration file
+  --input, -i          Input parquet file
+  --output, -o         Output parquet file
+  --model-url, -m      vLLM server URL
+  --port, -p           vLLM server port (shorthand for localhost)
+  --num-samples, -n    Number of samples per input
+  --temperature, -t    Sampling temperature
+  --enable-thinking    Enable thinking mode for reasoning models
+  --split-id           Split ID to process (1-indexed)
+  --num-splits         Total number of splits
+  --batch-size, -b     Batch size for processing
+  --resume             Resume from checkpoint
+  --dry-run            Run without API calls
 ```
 
-### Multiple Samples Output
-```
-| question | response | id | sample_idx |
-|----------|----------|----|------------|
-| What is ML? | Response 1... | 1 | 0 |
-| What is ML? | Response 2... | 1 | 1 |
-| What is ML? | Response 3... | 1 | 2 |
+## Parallel Processing Script
+
+Use the provided script for easy parallel processing:
+
+```bash
+./scripts/parallel_split_processing.sh
 ```
 
-## Performance Tips
+This starts multiple instances processing different data splits in parallel.
 
-1. **Batch Size**: Larger batches (64-256) are more efficient for vLLM
-2. **Workers**: Set workers to number of vLLM servers for optimal distribution
-3. **Checkpointing**: Set checkpoint interval based on your dataset size
-4. **Memory**: Monitor memory usage with large datasets or many samples
+## Examples
+
+See the `configs/` directory for example configurations:
+- `example_simple.yaml` - Basic single-sample generation
+- `example_repeat_generation.yaml` - Multiple samples with temperature variation
+- `example_reasoning.yaml` - Configuration for reasoning models with thinking mode
+- `example_split_processing.yaml` - Parallel processing with data splits
+
+## Architecture
+
+The pipeline follows a simple synchronous architecture:
+
+1. **DataLoader**: Loads parquet files and handles data splitting
+2. **VLLMClient**: Synchronous HTTP client for vLLM API communication
+3. **BatchProcessor**: Processes data in batches with checkpoint support
+4. **DataWriter**: Saves results with split-aware file naming
 
 ## Development
 
-### Running Tests
-
 ```bash
-# Install dev dependencies
+# Install in development mode
 pip install -e ".[dev]"
 
 # Run tests
-pytest tests/
+pytest
 
-# Run with coverage
-pytest --cov=vllm_generator tests/
+# Format code
+black src/
+isort src/
 ```
-
-### Project Structure
-
-```
-vllm-generator/
-├── src/vllm_generator/
-│   ├── config/         # Configuration management
-│   ├── data/          # Data loading and writing
-│   ├── models/        # vLLM client and generation
-│   ├── pipeline/      # Pipeline orchestration
-│   ├── tracking/      # Metrics and monitoring
-│   └── utils/         # Utilities and helpers
-├── configs/           # Example configurations
-├── tests/            # Unit tests
-└── example_usage.py  # Usage examples
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Connection Error**: Ensure vLLM server is running and accessible
-2. **Memory Error**: Reduce batch size or use chunked processing
-3. **Timeout Error**: Increase timeout in retry configuration
-4. **Invalid Column**: Check input_column exists in your parquet file
-
-### Debug Mode
-
-```bash
-# Enable debug logging
-python -m vllm_generator generate --config config.yaml --log-level DEBUG
-```
-
-## License
-
-MIT License - see LICENSE file for details.

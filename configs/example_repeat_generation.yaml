@@ -8,9 +8,8 @@ data:
   # Copy additional columns to output
   copy_columns: ["id", "category"]
 
-models:
-  - url: "http://localhost:8000"
-    name: "primary_model"
+model:
+  url: "http://localhost:8000"
 
 generation:
   # Generate 5 samples per input
@@ -24,7 +23,6 @@ generation:
 
 processing:
   batch_size: 16  # Smaller batch size for multiple samples
-  num_workers: 1
   checkpoint_interval: 50
 
 retry:

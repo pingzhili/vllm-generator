@@ -2,8 +2,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="vllm-generator",
-    version="0.1.0",
-    description="A scalable data generation pipeline using vLLM models",
+    version="0.2.0",
+    description="A simplified data generation pipeline using vLLM models with data splitting",
     author="Your Name",
     author_email="your.email@example.com",
     packages=find_packages(where="src"),
@@ -14,19 +14,16 @@ setup(
         "pyarrow>=10.0.0",
         "pydantic>=2.0.0",
         "pyyaml>=6.0",
-        "httpx>=0.24.0",
+        "requests>=2.28.0",
         "loguru>=0.7.0",
         "rich>=13.0.0",
         "click>=8.0.0",
         "tenacity>=8.2.0",
         "tqdm>=4.65.0",
-        "aiofiles>=23.0.0",
-        "asyncio>=3.4.3",
     ],
     extras_require={
         "dev": [
             "pytest>=7.3.0",
-            "pytest-asyncio>=0.21.0",
             "pytest-cov>=4.1.0",
             "black>=23.0.0",
             "isort>=5.12.0",

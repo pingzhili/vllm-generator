@@ -1,4 +1,4 @@
-"""Data writer for saving results to parquet files."""
+"""Data writer for saving results to parquet files with split support."""
 
 from pathlib import Path
 from typing import List, Optional, Union, Dict, Any
@@ -6,34 +6,50 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ..config.schemas import DataConfig
+from ..config.schemas import DataConfig, ProcessingConfig
 from ..utils import get_logger, ensure_directory
 
 
 class DataWriter:
     """Write processed data to parquet files."""
     
-    def __init__(self, config: DataConfig):
+    def __init__(self, data_config: DataConfig, processing_config: ProcessingConfig):
         """Initialize data writer with configuration."""
-        self.config = config
+        self.data_config = data_config
+        self.processing_config = processing_config
         self.logger = get_logger("DataWriter")
         
         # Ensure output directory exists
-        ensure_directory(self.config.output_path.parent)
+        ensure_directory(self.get_output_path().parent)
+    
+    def get_output_path(self) -> Path:
+        """Get output path with split suffix if applicable."""
+        base_path = self.data_config.output_path
+        
+        # If using splits, modify the filename
+        if self.processing_config.split_id is not None and self.processing_config.num_splits is not None:
+            stem = base_path.stem
+            suffix = base_path.suffix
+            parent = base_path.parent
+            split_name = f"{stem}-{self.processing_config.split_id}-of-{self.processing_config.num_splits}{suffix}"
+            return parent / split_name
+        
+        return base_path
     
     def write(self, df: pd.DataFrame) -> None:
         """Write dataframe to parquet file."""
-        self.logger.info(f"Writing {len(df)} rows to {self.config.output_path}")
+        output_path = self.get_output_path()
+        self.logger.info(f"Writing {len(df)} rows to {output_path}")
         
         # Write to parquet
         df.to_parquet(
-            self.config.output_path,
+            output_path,
             engine="pyarrow",
             compression="snappy",
             index=False
         )
         
-        self.logger.info(f"Successfully wrote data to {self.config.output_path}")
+        self.logger.info(f"Successfully wrote data to {output_path}")
     
     def write_batch(
         self,
@@ -43,10 +59,11 @@ class DataWriter:
     ) -> Path:
         """Write a batch of data with unique filename."""
         if output_dir is None:
-            output_dir = self.config.output_path.parent
+            output_dir = self.get_output_path().parent
         
         # Create batch filename
-        batch_filename = f"{self.config.output_path.stem}_batch_{batch_id:04d}.parquet"
+        base_name = self.get_output_path().stem
+        batch_filename = f"{base_name}_batch_{batch_id:04d}.parquet"
         batch_path = output_dir / batch_filename
         
         self.logger.debug(f"Writing batch {batch_id} to {batch_path}")
@@ -73,7 +90,7 @@ class DataWriter:
         # Handle single responses
         if responses and isinstance(responses[0], str):
             for idx, response in zip(indices, responses):
-                df.loc[idx, self.config.output_column] = response
+                df.loc[idx, self.data_config.output_column] = response
         
         # Handle multiple responses per input
         elif responses and isinstance(responses[0], list):
@@ -83,7 +100,7 @@ class DataWriter:
             for idx, response_list in zip(indices, responses):
                 for response in response_list:
                     row = df.loc[idx].copy()
-                    row[self.config.output_column] = response
+                    row[self.data_config.output_column] = response
                     expanded_rows.append(row)
             
             df = pd.DataFrame(expanded_rows).reset_index(drop=True)
@@ -101,7 +118,7 @@ class DataWriter:
             return
         
         if output_path is None:
-            output_path = self.config.output_path
+            output_path = self.get_output_path()
         
         self.logger.info(f"Merging {len(batch_files)} batch files")
         
@@ -134,10 +151,16 @@ class DataWriter:
         metadata: Dict[str, Any]
     ) -> Path:
         """Write checkpoint file with metadata."""
-        checkpoint_dir = self.config.output_path.parent / "checkpoints"
+        checkpoint_dir = self.get_output_path().parent / "checkpoints"
         ensure_directory(checkpoint_dir)
         
-        checkpoint_path = checkpoint_dir / f"checkpoint_{checkpoint_id}.parquet"
+        # Include split info in checkpoint name if applicable
+        if self.processing_config.split_id is not None:
+            checkpoint_name = f"checkpoint_{checkpoint_id}_split{self.processing_config.split_id}.parquet"
+        else:
+            checkpoint_name = f"checkpoint_{checkpoint_id}.parquet"
+        
+        checkpoint_path = checkpoint_dir / checkpoint_name
         
         # Add metadata to parquet file
         table = pa.Table.from_pandas(df)

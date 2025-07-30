@@ -1,15 +1,14 @@
 """Batch processor for efficient data processing."""
 
-import asyncio
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import time
 import json
-from tqdm.asyncio import tqdm
+from tqdm import tqdm
 
 from ..config.schemas import Config
 from ..data import DataLoader, DataWriter, DataProcessor
-from ..models import GenerationManager
+from ..models import VLLMClient
 from ..utils import get_logger, get_timestamp
 
 
@@ -95,18 +94,18 @@ class BatchProcessor:
         self.data_processor = DataProcessor()
         self.checkpoint_manager = CheckpointManager(config.processing.checkpoint_dir)
     
-    async def process(
+    def process(
         self,
-        generation_manager: GenerationManager,
+        vllm_client: VLLMClient,
         dry_run: bool = False,
         progress_bar: bool = True
     ) -> Dict[str, Any]:
         """Process data with generation."""
         start_time = time.time()
         
-        # Load data
+        # Load data (with split support)
         self.logger.info("Loading input data...")
-        df = self.data_loader.load()
+        df = self.data_loader.load_split()
         total_rows = len(df)
         
         # Check for resume
@@ -148,20 +147,41 @@ class BatchProcessor:
                 # Process batch
                 if dry_run:
                     # Simulate processing
-                    await asyncio.sleep(0.1)
-                    results = [{"text": f"Dry run response {i}"} for i in range(len(batch_df))]
+                    time.sleep(0.1)
+                    results = [f"Dry run response {i}" for i in range(len(batch_df))]
                 else:
                     # Get prompts
                     prompts = self.data_loader.get_input_texts(batch_df)
                     
-                    # Generate responses
-                    responses = await generation_manager.generate_batch(
-                        prompts,
-                        progress_callback=pbar.update if pbar else None
-                    )
-                    
-                    # Extract texts
-                    results = generation_manager.extract_texts_from_responses(responses)
+                    # Generate responses based on num_samples
+                    results = []
+                    if self.config.generation.num_samples == 1:
+                        # Single sample per prompt
+                        for prompt in prompts:
+                            try:
+                                response = vllm_client.generate(prompt)
+                                text = response.get("choices", [{}])[0].get("text", "")
+                                results.append(text)
+                            except Exception as e:
+                                self.logger.error(f"Generation failed: {e}")
+                                results.append("")
+                            if pbar:
+                                pbar.update(1)
+                    else:
+                        # Multiple samples per prompt
+                        for prompt in prompts:
+                            prompt_results = []
+                            for sample_idx in range(self.config.generation.num_samples):
+                                try:
+                                    response = vllm_client.generate(prompt, sample_idx=sample_idx)
+                                    text = response.get("choices", [{}])[0].get("text", "")
+                                    prompt_results.append(text)
+                                except Exception as e:
+                                    self.logger.error(f"Generation failed for sample {sample_idx}: {e}")
+                                    prompt_results.append("")
+                            results.append(prompt_results)
+                            if pbar:
+                                pbar.update(1)
                 
                 # Create output dataframe
                 output_df = self.data_processor.create_response_dataframe(
@@ -186,12 +206,7 @@ class BatchProcessor:
                 
                 processed_results.extend(results)
                 
-                if pbar and not dry_run:
-                    # Update progress if not already updated by callback
-                    current = pbar.n
-                    expected = batch_end
-                    if current < expected:
-                        pbar.update(expected - current)
+                # Progress bar is already updated in the generation loop
         
         finally:
             if pbar:
@@ -207,16 +222,28 @@ class BatchProcessor:
         
         # Calculate statistics
         elapsed_time = time.time() - start_time
+        
+        # Count total responses (handling both single and multiple samples)
+        total_responses = 0
+        if processed_results and isinstance(processed_results[0], list):
+            # Multiple samples per prompt
+            total_responses = sum(len(r) for r in processed_results)
+        else:
+            # Single sample per prompt
+            total_responses = len(processed_results)
+        
         stats = {
-            "total_processed": len(processed_results),
+            "total_prompts": len(processed_results),
+            "total_responses": total_responses,
             "processing_time": elapsed_time,
-            "prompts_per_second": len(processed_results) / elapsed_time,
-            "model_statistics": generation_manager.get_statistics()
+            "prompts_per_second": len(processed_results) / elapsed_time if elapsed_time > 0 else 0,
+            "responses_per_second": total_responses / elapsed_time if elapsed_time > 0 else 0
         }
         
         self.logger.info(
-            f"Processing completed: {stats['total_processed']} items in "
-            f"{elapsed_time:.2f}s ({stats['prompts_per_second']:.2f} prompts/s)"
+            f"Processing completed: {stats['total_prompts']} prompts, "
+            f"{stats['total_responses']} responses in {elapsed_time:.2f}s "
+            f"({stats['prompts_per_second']:.2f} prompts/s)"
         )
         
         return stats

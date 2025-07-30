@@ -2,7 +2,7 @@
 
 from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 
 class DataConfig(BaseModel):
@@ -31,10 +31,9 @@ class DataConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """Configuration for a single vLLM model endpoint."""
+    """Configuration for vLLM model endpoint."""
     
     url: HttpUrl = Field(..., description="vLLM server URL")
-    name: Optional[str] = Field(None, description="Model name/identifier")
     api_key: Optional[str] = Field(None, description="API key if required")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers")
 
@@ -67,10 +66,20 @@ class ProcessingConfig(BaseModel):
     """Configuration for processing parameters."""
     
     batch_size: int = Field(32, ge=1, description="Batch size for processing")
-    num_workers: int = Field(1, ge=1, description="Number of parallel workers")
     checkpoint_interval: int = Field(100, ge=1, description="Save checkpoint every N batches")
     checkpoint_dir: Path = Field(Path("./checkpoints"), description="Checkpoint directory")
     resume: bool = Field(False, description="Resume from checkpoint")
+    split_id: Optional[int] = Field(None, ge=1, description="Split ID to process (1-indexed)")
+    num_splits: Optional[int] = Field(None, ge=1, description="Total number of splits")
+    
+    @model_validator(mode='after')
+    def validate_splits(self) -> 'ProcessingConfig':
+        """Validate split configuration."""
+        if (self.split_id is None) != (self.num_splits is None):
+            raise ValueError("Both split_id and num_splits must be specified together")
+        if self.split_id is not None and self.split_id > self.num_splits:
+            raise ValueError(f"split_id ({self.split_id}) cannot be greater than num_splits ({self.num_splits})")
+        return self
 
 
 class RetryConfig(BaseModel):
@@ -106,17 +115,11 @@ class Config(BaseModel):
     """Main configuration schema."""
     
     data: DataConfig
-    models: List[ModelConfig]
+    model: ModelConfig
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    
-    @field_validator("models")
-    def validate_models(cls, v: List[ModelConfig]) -> List[ModelConfig]:
-        if not v:
-            raise ValueError("At least one model must be configured")
-        return v
     
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization validation."""
