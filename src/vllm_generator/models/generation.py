@@ -237,6 +237,7 @@ class GenerationManager:
         all_results = [None] * len(prompts)
         
         for param_group in param_groups.values():
+            logger.info(f"DEBUG-2 {param_group['params']}")
             group_results = self._generate_with_retry(
                 param_group["prompts"],
                 param_group["params"]
