@@ -20,8 +20,7 @@ run_split() {
         --config "$CONFIG_FILE" \
         --port "$port" \
         --split-id "$split_id" \
-        --num-splits "$NUM_SPLITS" \
-        --log-file "logs/split_${split_id}.log" &
+        --num-splits "$NUM_SPLITS"  &
     
     echo "Split $split_id started with PID $!"
 }
