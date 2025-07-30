@@ -3,7 +3,7 @@ import pandas as pd
 import json
 from pathlib import Path
 
-from src.data.processor import DataProcessor
+from src import DataProcessor
 
 
 class TestDataProcessor:

@@ -1,10 +1,9 @@
 import pytest
-import pandas as pd
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-from src.models.generation import GenerationManager
-from src.models.config import GenerationConfig
-from src.models.vllm_wrapper import MockVLLMModel
+from src import GenerationManager
+from src import GenerationConfig
+from src import MockVLLMModel
 
 
 class TestRepeatOrder:

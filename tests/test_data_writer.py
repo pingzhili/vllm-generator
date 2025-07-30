@@ -3,7 +3,7 @@ import pandas as pd
 import json
 from pathlib import Path
 
-from src.data.writer import DataWriter
+from src import DataWriter
 
 
 class TestDataWriter:

@@ -9,12 +9,12 @@ import argparse
 from pathlib import Path
 from typing import Optional, List
 
-from .models import ModelConfig
-from .config import ConfigParser, ConfigSchema, validate_config
-from .config.schemas import create_config_from_args
-from .pipeline import PipelineManager
-from .utils import setup_logging, parse_args_string, parse_gpu_list
-from .utils.helpers import validate_output_path
+from src.models import ModelConfig
+from src.config import ConfigParser, ConfigSchema, validate_config
+from src.config.schemas import create_config_from_args
+from src.pipeline import PipelineManager
+from src.utils import setup_logging, parse_args_string, parse_gpu_list
+from src.utils.helpers import validate_output_path
 
 logger = logging.getLogger(__name__)
 

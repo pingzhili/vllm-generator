@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 from pathlib import Path
 
-from src.data.loader import DataLoader
+from src import DataLoader
 
 
 class TestDataLoader:

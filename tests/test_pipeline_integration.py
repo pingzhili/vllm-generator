@@ -2,10 +2,10 @@ import pytest
 import pandas as pd
 from pathlib import Path
 
-from src.models.config import ModelConfig, GenerationConfig
-from src.data import DataLoader, DataProcessor, DataWriter
-from src.pipeline.base import SimplePipeline
-from src.tracking import GenerationTracker
+from src import ModelConfig, GenerationConfig
+from src import DataLoader, DataProcessor, DataWriter
+from src import SimplePipeline
+from src import GenerationTracker
 
 
 class TestPipelineIntegration:

@@ -1,11 +1,9 @@
 import pytest
 import os
-import yaml
 import json
-from pathlib import Path
 
-from src.config.parser import ConfigParser
-from src.config.schemas import validate_config, create_config_from_args
+from src import ConfigParser
+from src import validate_config, create_config_from_args
 
 
 class TestConfigParser:

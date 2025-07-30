@@ -1,9 +1,7 @@
 import pytest
-import yaml
 import json
-from pathlib import Path
 
-from src.models.config import ModelConfig, GenerationConfig
+from src import ModelConfig, GenerationConfig
 
 
 class TestModelConfig:

@@ -1,10 +1,9 @@
 import pytest
 import time
 import json
-from pathlib import Path
 
-from src.tracking.tracker import GenerationTracker, DistributedTracker
-from src.tracking.metrics import MetricsCollector, TokenMetrics
+from src import GenerationTracker, DistributedTracker
+from src import MetricsCollector, TokenMetrics
 
 
 class TestGenerationTracker:
