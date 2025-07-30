@@ -5,7 +5,7 @@
 # by running multiple instances of vllm-generator with different splits
 
 # Configuration
-CONFIG_FILE="configs/qwen3_8b_single_server.yaml"
+CONFIG_FILE="configs/qwen3.yaml"
 NUM_SPLITS=4
 BASE_PORT=8000
 
