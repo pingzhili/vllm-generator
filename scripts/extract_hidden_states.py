@@ -54,9 +54,9 @@ def apply_chat_template(strings, tokenizer):
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=True
+                enable_thinking=False
             )
-            templated = templated + "<think>"
+            # templated = templated + "<think>"
         else:
             # Fallback if no chat template
             templated = text
