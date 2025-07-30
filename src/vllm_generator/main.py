@@ -279,14 +279,22 @@ def main():
         # Create model config
         model_config = ModelConfig.from_dict(config.get("model_config", {}))
 
-        logger.info(f"Parallel mode: {args.parallel_mode}")
         # Create pipeline manager
+        parallel_config = config.get("parallel_config", {})
+        if "parallel_mode" in parallel_config:
+            args.parallel_mode = parallel_config["parallel_mode"]
+        if "num_workers" in parallel_config:
+            args.parallel_workers = parallel_config["num_workers"]
+        if "ports" in parallel_config:
+            args.ports = parallel_config["ports"]
+        if "worker_gpus" in parallel_config:
+            args.worker_gpus = parallel_config["worker_gpus"]
         manager = PipelineManager(
             model_config=model_config,
             generation_config=config.get("generation_config", {}),
             parallel_mode=args.parallel_mode,
             num_workers=args.parallel_workers or 1,
-            worker_gpus=config.get("parallel_config", {}).get("worker_gpus"),
+            worker_gpus=args.worker_gpus,
             base_port=int(args.ports) if args.ports else 8000
         )
         
