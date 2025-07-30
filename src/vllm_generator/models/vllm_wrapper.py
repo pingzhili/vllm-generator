@@ -207,12 +207,20 @@ class VLLMServer:
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
-                response = requests.get(f"{self.base_url}/health")
+                # Try /ping endpoint first (POST method based on logs)
+                response = requests.post(f"{self.base_url}/ping")
                 if response.status_code == 200:
                     logger.info(f"vLLM server ready on port {self.port}")
                     return
             except:
-                pass
+                try:
+                    # Fallback to /v1/models endpoint (GET method)
+                    response = requests.get(f"{self.base_url}/v1/models")
+                    if response.status_code == 200:
+                        logger.info(f"vLLM server ready on port {self.port}")
+                        return
+                except:
+                    pass
             time.sleep(1)
 
         raise TimeoutError(f"vLLM server failed to start on port {self.port}")

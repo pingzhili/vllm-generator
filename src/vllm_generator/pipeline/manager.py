@@ -133,59 +133,76 @@ class PipelineManager:
         # Start vLLM servers
         servers = []
         logger.info("Starting vLLM servers")
-        for i in range(self.num_workers):
-            # Configure GPU
-            gpu_id = self.worker_gpus[i] if i < len(self.worker_gpus) else i
-            config = self.model_config.__class__(**self.model_config.to_dict())
-            config.device = f"cuda:{gpu_id}"
-            
-            # Start server
-            port = self.base_port + i
-            server = VLLMServer(config, port)
-            server.start()
-            servers.append(server)
         
-        # Process shards in parallel
-        logger.info("Processing shards in parallel")
-        with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
-            # Submit work to each server
-            future_to_worker = {}
-            for i, (shard, server) in enumerate(zip(shards, servers)):
-                worker_config = WorkerConfig(
-                    worker_id=i,
-                    gpu_id=self.worker_gpus[i] if i < len(self.worker_gpus) else i,
-                    port=server.port,
-                    shard_path=shard.get("path"),
-                    output_path=str(output_dir / f"worker_{i}_output.parquet")
-                )
+        try:
+            for i in range(self.num_workers):
+                # Configure GPU
+                gpu_id = self.worker_gpus[i] if i < len(self.worker_gpus) else i
+                config = self.model_config.__class__(**self.model_config.to_dict())
+                config.device = f"cuda:{gpu_id}"
                 
-                future = executor.submit(
-                    self._process_shard_with_server,
-                    worker_config,
-                    server,
-                    question_column,
-                    output_format,
-                    **kwargs
-                )
-                future_to_worker[future] = i
+                # Start server
+                port = self.base_port + i
+                server = VLLMServer(config, port)
+                server.start()
+                servers.append(server)
+                logger.info(f"Started vLLM server {i} on port {port}")
             
-            # Collect results
-            worker_results = []
-            for future in as_completed(future_to_worker):
-                worker_id = future_to_worker[future]
+            # Process shards in parallel
+            logger.info("Processing shards in parallel")
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                # Submit work to each server
+                future_to_worker = {}
+                for i, (shard, server) in enumerate(zip(shards, servers)):
+                    worker_config = WorkerConfig(
+                        worker_id=i,
+                        gpu_id=self.worker_gpus[i] if i < len(self.worker_gpus) else i,
+                        port=server.port,
+                        shard_path=shard.get("path"),
+                        output_path=str(output_dir / f"worker_{i}_output.parquet")
+                    )
+                    
+                    future = executor.submit(
+                        self._process_shard_with_server,
+                        worker_config,
+                        server,
+                        question_column,
+                        output_format,
+                        **kwargs
+                    )
+                    future_to_worker[future] = i
+                
+                # Collect results
+                worker_results = []
+                for future in as_completed(future_to_worker):
+                    worker_id = future_to_worker[future]
+                    try:
+                        result = future.result()
+                        worker_results.append(result)
+                        logger.info(f"Worker {worker_id} completed")
+                    except Exception as e:
+                        logger.error(f"Worker {worker_id} failed: {e}")
+                        if kwargs.get("worker_failure_mode", "retry") == "fail":
+                            raise
+                            
+        except Exception as e:
+            logger.error(f"Multi-server pipeline failed: {e}")
+            # Always shutdown servers on error
+            for server in servers:
                 try:
-                    result = future.result()
-                    worker_results.append(result)
-                    logger.info(f"Worker {worker_id} completed")
-                except Exception as e:
-                    logger.error(f"Worker {worker_id} failed: {e}")
-                    if kwargs.get("worker_failure_mode", "retry") == "fail":
-                        raise
+                    logger.info(f"Shutting down server on port {server.port}")
+                    server.shutdown()
+                except Exception as shutdown_error:
+                    logger.error(f"Error shutting down server: {shutdown_error}")
+            raise
         
-        # Shutdown servers
+        # Shutdown servers normally
         logger.info("Shutting down vLLM servers")
         for server in servers:
-            server.shutdown()
+            try:
+                server.shutdown()
+            except Exception as e:
+                logger.error(f"Error shutting down server on port {server.port}: {e}")
         
         # Merge results
         logger.info("Merging worker outputs")
