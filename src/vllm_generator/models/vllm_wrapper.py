@@ -51,12 +51,10 @@ class VLLMModel(BaseVLLMModel):
             MockVLLMModel.__init__(self, config)
         logger.info(f"Initializing vLLM with model config: {config}")
 
-    # def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    def generate(self, prompts: List[str]) -> List[Dict[str, Any]]:
+    def generate(self, prompts: List[str], sampling_params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Generate responses for a list of prompts"""
-        # if sampling_params is None:
-        #     sampling_params = self.config.to_sampling_params()
-        sampling_params = self.config.to_sampling_params()
+        if sampling_params is None:
+            sampling_params = self.config.to_sampling_params()
 
         # Create SamplingParams object
         params = self.sampling_params_class(**sampling_params)

@@ -173,6 +173,7 @@ class GenerationManager:
             for item_idx, item in enumerate(batch_items):
                 for repeat_id in range(num_repeats):
                     # Get repeat-specific parameters
+                    logger.info(f"DEBUG-1 {sampling_params}")
                     repeat_params = self._get_repeat_params(
                         repeat_id,
                         repeat_strategy,
