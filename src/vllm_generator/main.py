@@ -7,10 +7,9 @@ import sys
 import logging
 import argparse
 from pathlib import Path
-from typing import Optional, List
 
 from vllm_generator.models import ModelConfig
-from vllm_generator.config import ConfigParser, ConfigSchema, validate_config
+from vllm_generator.config import ConfigParser, validate_config
 from vllm_generator.config.schemas import create_config_from_args
 from vllm_generator.pipeline import PipelineManager
 from vllm_generator.utils import setup_logging, parse_args_string, parse_gpu_list

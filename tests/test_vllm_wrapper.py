@@ -1,5 +1,3 @@
-import pytest
-import time
 
 from vllm_generator import ModelConfig
 from vllm_generator import MockVLLMModel, VLLMModel

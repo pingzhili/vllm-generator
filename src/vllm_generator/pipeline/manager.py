@@ -1,14 +1,12 @@
 import logging
 import time
-import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import pandas as pd
 
-from .base import BasePipeline, SimplePipeline
+from .base import SimplePipeline
 from .batch_processor import DistributedBatchProcessor
 from ..data import DataLoader, DataProcessor, DataWriter
 from ..models import ModelConfig, VLLMModel, VLLMServer
@@ -249,7 +247,7 @@ class PipelineManager:
         
         # Write results
         data_writer = DataWriter(output_format=output_format)
-        output_df = data_writer.write_results(
+        data_writer.write_results(
             shard_df,
             results,
             worker_config.output_path,
@@ -285,7 +283,7 @@ class PipelineManager:
         @ray.remote(num_gpus=kwargs.get("ray_num_gpus", 1))
         class RayWorker:
             def __init__(self, model_config, generation_config):
-                from ..models import VLLMModel, GenerationManager
+                from ..models import GenerationManager
                 from ..models.config import GenerationConfig
                 
                 self.model = VLLMModel(model_config)
@@ -334,7 +332,7 @@ class PipelineManager:
         
         # Write results
         data_writer = DataWriter(output_format=output_format)
-        output_df = data_writer.write_results(
+        _ = data_writer.write_results(
             df,
             results,
             output_path,

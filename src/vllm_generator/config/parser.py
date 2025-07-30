@@ -1,7 +1,7 @@
 import json
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import os
 
 from ..utils.helpers import merge_configs

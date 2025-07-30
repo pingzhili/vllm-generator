@@ -1,8 +1,8 @@
 import logging
 import time
 from typing import Optional, List, Dict, Any, Iterator
-import numpy as np
 from abc import ABC, abstractmethod
+from vllm_generator.models import ModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class BaseVLLMModel(ABC):
 class VLLMModel(BaseVLLMModel):
     """Wrapper for vLLM model (real implementation)"""
     
-    def __init__(self, config: "ModelConfig"):
+    def __init__(self, config: ModelConfig):
         self.config = config
         self.llm = None
         self.sampling_params_class = None
@@ -120,7 +120,7 @@ class VLLMModel(BaseVLLMModel):
 class MockVLLMModel(BaseVLLMModel):
     """Mock vLLM model for testing on systems without GPU"""
     
-    def __init__(self, config: "ModelConfig"):
+    def __init__(self, config: ModelConfig):
         self.config = config
         logger.info(f"Initializing mock vLLM model for: {config.model}")
         
@@ -207,7 +207,7 @@ class MockVLLMModel(BaseVLLMModel):
 class VLLMServer:
     """Wrapper for vLLM server mode (for multi-server parallelism)"""
     
-    def __init__(self, config: "ModelConfig", port: int = 8000):
+    def __init__(self, config: ModelConfig, port: int = 8000):
         self.config = config
         self.port = port
         self.process = None

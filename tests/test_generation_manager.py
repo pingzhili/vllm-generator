@@ -1,6 +1,5 @@
 import pytest
-import time
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from vllm_generator import ModelConfig, GenerationConfig
 from vllm_generator import GenerationManager
@@ -100,7 +99,7 @@ class TestGenerationManager:
         
         manager.model.generate = mock_generate
         
-        results = manager.generate_with_repeats(
+        manager.generate_with_repeats(
             items,
             num_repeats=3,
             repeat_strategy="temperature_schedule",
@@ -230,7 +229,7 @@ class TestGenerationManager:
         
         manager.model.generate = mock_generate
         
-        results = manager.generate_with_repeats(
+        manager.generate_with_repeats(
             items,
             num_repeats=3,
             repeat_strategy="independent",

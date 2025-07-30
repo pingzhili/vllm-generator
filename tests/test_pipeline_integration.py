@@ -132,7 +132,7 @@ class TestPipelineIntegration:
         
         pipeline.initialize()
         try:
-            result = pipeline.run()
+            _ = pipeline.run()
             
             # Check checkpoint was created
             checkpoint_path = Path(tracker.get_checkpoint_path())
@@ -197,7 +197,7 @@ class TestPipelineIntegration:
         
         pipeline.initialize()
         try:
-            result = pipeline.run()
+            _ = pipeline.run()
             
             # Check metadata file was created
             metadata_path = Path(tracker.get_metadata_path())

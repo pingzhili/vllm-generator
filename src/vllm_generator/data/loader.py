@@ -1,9 +1,8 @@
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Iterator, Tuple
+from typing import Optional, List, Dict, Any, Iterator
 import pandas as pd
 import numpy as np
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 

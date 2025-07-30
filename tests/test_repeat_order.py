@@ -55,7 +55,7 @@ class TestRepeatOrder:
         
         # With batch_size=8 and 4 repeats, we can fit 2 items per batch
         # So order should be: A,A,A,A,B,B,B,B (first batch), C,C,C,C,D,D,D,D (second batch)
-        expected_order = (
+        _ = (
             ["Question A"] * 4 + ["Question B"] * 4 +
             ["Question C"] * 4 + ["Question D"] * 4
         )
@@ -130,7 +130,7 @@ class TestRepeatOrder:
         
         def track_params(prompts, sampling_params=None):
             sampling_params_used.append((len(prompts), sampling_params))
-            return [{"response": f"Response", "tokens": 10, "latency": 0.1, "finish_reason": "stop"} 
+            return [{"response": "Response", "tokens": 10, "latency": 0.1, "finish_reason": "stop"} 
                     for _ in prompts]
         
         mock_model._generate_with_retry = track_params
@@ -157,7 +157,7 @@ class TestRepeatOrder:
         def track_progress(completed, total, progress_type):
             progress_calls.append((completed, total, progress_type))
         
-        results = manager.generate_with_repeats(
+        _ = manager.generate_with_repeats(
             sample_items,
             num_repeats=3,
             repeat_order="item_first",

@@ -1,7 +1,4 @@
 import pytest
-import os
-from pathlib import Path
-import tempfile
 
 from vllm_generator import setup_logging, get_logger, ProgressLogger
 from vllm_generator import (

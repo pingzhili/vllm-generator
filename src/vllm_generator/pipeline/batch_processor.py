@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional, Iterator
+from typing import List, Dict, Any, Iterator
 from queue import Queue, Empty
 from threading import Thread, Event
 import time

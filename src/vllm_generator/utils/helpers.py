@@ -1,5 +1,5 @@
 import importlib.util
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from pathlib import Path
 import re
 
