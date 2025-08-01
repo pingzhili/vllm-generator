@@ -5,9 +5,9 @@
 # by running multiple instances of vllm-generator with different splits
 
 # Configuration
-CONFIG_FILE="configs/qwen3-thinking.yaml"
+CONFIG_FILE="configs/qwen3-nonthinking.yaml"
 NUM_SPLITS=8
-BASE_PORT=8010
+BASE_PORT=8000
 
 # Function to run a split
 run_split() {

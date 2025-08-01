@@ -12,7 +12,7 @@ data:
   output_column: "response"
 
 model:
-  url: "http://localhost:8010"  # Can be overridden with --port argument
+  url: "http://localhost:8000"  # Can be overridden with --port argument
 
 generation:
   num_samples: 32
