@@ -2,6 +2,8 @@
 
 from typing import Dict, Any, List
 import time
+import shutil
+from pathlib import Path
 from tqdm import tqdm
 import pandas as pd
 
@@ -41,6 +43,11 @@ class SimpleProcessor:
         
         # Prepare results storage
         all_results = []
+        intermediate_path = None
+        
+        # Initialize online saving if enabled
+        if self.config.processing.online_saving:
+            intermediate_path = self._setup_intermediate_file()
         
         # Setup progress bar
         pbar = None
@@ -103,6 +110,10 @@ class SimpleProcessor:
                         result_row["sample_idx"] = sample_idx
                         all_results.append(result_row)
                 
+                # Save intermediate results if online saving is enabled
+                if self.config.processing.online_saving and len(all_results) % self.config.processing.batch_size == 0:
+                    self._save_intermediate_batch(all_results, intermediate_path)
+                
                 if pbar:
                     pbar.update(1)
         
@@ -110,12 +121,18 @@ class SimpleProcessor:
             if pbar:
                 pbar.close()
         
-        # Create output dataframe
-        output_df = pd.DataFrame(all_results)
-        
-        # Save results
-        self.logger.info("Saving results...")
-        self.data_writer.write(output_df)
+        # Handle final saving
+        if self.config.processing.online_saving:
+            # Save any remaining results and finalize
+            if len(all_results) % self.config.processing.batch_size != 0:
+                self._save_intermediate_batch(all_results, intermediate_path)
+            self._finalize_intermediate_file(intermediate_path)
+            self.logger.info("Online saving completed - intermediate file finalized")
+        else:
+            # Traditional batch saving
+            output_df = pd.DataFrame(all_results)
+            self.logger.info("Saving results...")
+            self.data_writer.write(output_df)
         
         # Calculate statistics
         elapsed_time = time.time() - start_time
@@ -136,3 +153,57 @@ class SimpleProcessor:
         )
         
         return stats
+    
+    def _setup_intermediate_file(self) -> Path:
+        """Setup intermediate file path with identical name to final output."""
+        final_output_path = self.data_writer.get_output_path()
+        temp_dir = final_output_path.parent / self.config.processing.temp_dir
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Use exact same filename as final output
+        intermediate_path = temp_dir / final_output_path.name
+        
+        self.logger.info(f"Intermediate file will be saved as: {intermediate_path}")
+        return intermediate_path
+    
+    def _save_intermediate_batch(self, all_results: List[Dict], intermediate_path: Path) -> None:
+        """Save all accumulated results to intermediate file (overwriting)."""
+        if not all_results:
+            return
+        
+        # Create dataframe with all results so far
+        output_df = pd.DataFrame(all_results)
+        
+        # Write to intermediate file (overwriting previous version)
+        output_df.to_parquet(
+            intermediate_path,
+            engine="pyarrow",
+            compression="snappy",
+            index=False
+        )
+        
+        self.logger.debug(f"Saved {len(all_results)} results to intermediate file: {intermediate_path}")
+    
+    def _finalize_intermediate_file(self, intermediate_path: Path) -> None:
+        """Move intermediate file to final output location."""
+        if not intermediate_path or not intermediate_path.exists():
+            self.logger.warning("No intermediate file to finalize")
+            return
+        
+        final_output_path = self.data_writer.get_output_path()
+        
+        # Move intermediate file to final location
+        shutil.move(str(intermediate_path), str(final_output_path))
+        
+        # Clean up temp directory if requested and empty
+        if self.config.processing.cleanup_batches:
+            temp_dir = intermediate_path.parent
+            try:
+                if temp_dir.exists() and not any(temp_dir.iterdir()):
+                    temp_dir.rmdir()
+                    self.logger.debug(f"Cleaned up empty temp directory: {temp_dir}")
+            except OSError:
+                # Directory not empty or other issues, ignore
+                pass
+        
+        self.logger.info(f"Finalized intermediate file to: {final_output_path}")

@@ -23,7 +23,11 @@ generation:
   top_k: 20
   max_tokens: 32768
 
-processing: {}
+processing:
+  online_saving: true          # Enable saving after each batch
+  batch_size: 1               # Save after each question (1 question per batch)
+  temp_dir: "temp"    # Directory for intermediate files
+  cleanup_batches: false       # Clean up temp directory when done
 
 retry:
   max_retries: 3

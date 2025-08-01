@@ -66,6 +66,10 @@ class ProcessingConfig(BaseModel):
     
     split_id: Optional[int] = Field(None, ge=1, description="Split ID to process (1-indexed)")
     num_splits: Optional[int] = Field(None, ge=1, description="Total number of splits")
+    online_saving: bool = Field(True, description="Save results after each batch")
+    batch_size: int = Field(1, ge=1, description="Items per batch for online saving")
+    temp_dir: str = Field("temp", description="Directory for batch files")
+    cleanup_batches: bool = Field(True, description="Clean up batch files after merging")
     
     @model_validator(mode='after')
     def validate_splits(self) -> 'ProcessingConfig':
