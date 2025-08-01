@@ -11,6 +11,8 @@ data:
   input_column: "problem"
   output_column: "response"
 
+enable_thinking: False
+
 model:
   url: "http://localhost:8000"  # Can be overridden with --port argument
 
@@ -20,10 +22,6 @@ generation:
   top_p: 0.95
   top_k: 20
   max_tokens: 32768
-  enable_thinking: false  # Set to true to enable thinking mode for reasoning
-  # You can also add custom extra_body parameters:
-  # extra_body:
-  #   custom_param: value
 
 processing: {}
 
