@@ -300,7 +300,7 @@ def main():
 
     # Final evaluation on best model
     print(f"\nLoading best model from epoch {epoch - patience_counter + 1}...")
-    checkpoint = torch.load(best_model_path, map_location=device)
+    checkpoint = torch.load(best_model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     
     final_val_loss, final_val_mae = evaluate(model, val_loader, criterion, device)
