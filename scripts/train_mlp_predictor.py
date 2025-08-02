@@ -7,7 +7,6 @@ Usage:
 """
 
 import argparse
-import pickle
 import json
 from pathlib import Path
 import numpy as np
@@ -15,10 +14,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 from typing import Dict, Tuple
-from loguru import logger
 import wandb
 
 
@@ -303,37 +300,7 @@ def main():
     with open(history_path, 'w') as f:
         json.dump(history, f, indent=2)
     
-    # Plot training curves
-    plt.figure(figsize=(12, 4))
-    
-    plt.subplot(1, 3, 1)
-    plt.plot(history['train_loss'], label='Train Loss')
-    plt.plot(history['val_loss'], label='Val Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE Loss')
-    plt.legend()
-    plt.title('Training and Validation Loss')
-    plt.grid(True, alpha=0.3)
-    
-    plt.subplot(1, 3, 2)
-    plt.plot(history['val_mae'])
-    plt.xlabel('Epoch')
-    plt.ylabel('MAE')
-    plt.title('Validation MAE')
-    plt.grid(True, alpha=0.3)
-    
-    plt.subplot(1, 3, 3)
-    plt.plot(history['learning_rates'])
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.title('Learning Rate Schedule')
-    plt.yscale('log')
-    plt.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(output_dir / 'training_curves.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
+
     # Final evaluation on best model
     print(f"\nLoading best model from epoch {epoch - patience_counter + 1}...")
     checkpoint = torch.load(best_model_path, map_location=device)
