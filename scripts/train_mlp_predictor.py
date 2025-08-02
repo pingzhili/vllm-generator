@@ -130,7 +130,7 @@ def evaluate(
             outputs = model(embeddings)
             loss = criterion(outputs, targets)
             
-            total_loss += loss.item() * embeddings.size(0)
+            total_loss += loss.item()
             all_preds.extend(outputs.cpu().numpy())
             all_targets.extend(targets.cpu().numpy())
     
