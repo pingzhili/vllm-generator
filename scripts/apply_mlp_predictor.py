@@ -2,9 +2,6 @@
 """
 Extract hidden states from unique strings in a parquet file.
 
-Usage:
-    python extract_hidden_states.py data.parquet question_column model_name output.pt
-    python extract_hidden_states.py /root/open-math-reasoning/sample_c7_300.parquet problem Qwen/Qwen3-8B /root/open-math-reasoning/sample_c7_300_problem_last_hidden_states.pt
 """
 
 import argparse
@@ -69,29 +66,15 @@ def load_model_and_tokenizer(model_name: str):
     return model, tokenizer
 
 
-def apply_chat_template(strings, tokenizer):
+def apply_think_start_token(strings, tokenizer):
     """Apply chat template to strings."""
     print("Applying chat template...")
 
-    templated_strings = []
+    appended_strings = []
     for text in tqdm(strings, desc="Templating"):
-        messages = [{"role": "user", "content": text}]
+        appended_strings.append(text + "<think>\n\n")
 
-        if hasattr(tokenizer, 'apply_chat_template'):
-            templated = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=True
-            )
-            templated = templated + "<think>\n\n"
-        else:
-            # Fallback if no chat template
-            templated = text
-
-        templated_strings.append(templated)
-
-    return templated_strings
+    return appended_strings
 
 
 def apply_adapter_on_last_hidden_states(model, tokenizer, texts, adapter):
@@ -138,7 +121,7 @@ def main():
     model, tokenizer = load_model_and_tokenizer(args.model_name)
 
     # 3. Apply chat template
-    templated_strings = apply_chat_template(unique_strings, tokenizer)
+    templated_strings = apply_think_start_token(unique_strings, tokenizer)
 
     # 4. Extract hidden states
     adapter = MLPPredictor(input_dim=model.config.hidden_size, hidden_dim=64).cuda()
