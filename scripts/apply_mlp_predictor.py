@@ -89,7 +89,7 @@ def apply_adapter_on_last_hidden_states(model, tokenizer, texts, adapter):
             # Forward pass
             outputs = model(**inputs, output_hidden_states=True)
             last_hidden_states = outputs.hidden_states[-1][0, -1]  # [batch_size, seq_len, hidden_dim]
-            adapter_score = adapter(last_hidden_states)
+            adapter_score = adapter(last_hidden_states.float())
             text_to_score[text] = adapter_score.item()
 
     return text_to_score
