@@ -228,6 +228,8 @@ def main():
     scheduler = optim.lr_scheduler.LinearLR(
         optimizer,
         total_iters=args.num_epochs,
+        start_factor=1.0,
+        end_factor=0.1
     )
     
     # Training history
