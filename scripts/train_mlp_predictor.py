@@ -246,14 +246,12 @@ def main():
     # Training loop
     print(f"\nStarting training for {args.num_epochs} epochs...")
     for epoch in range(args.num_epochs):
-        # Train
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-
         # Evaluate
         val_loss, val_mae = evaluate(model, val_loader, criterion, device)
-
         wandb.log({"val_loss": val_loss, "val_mae": val_mae})
 
+        # Train
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
 
         # Get current learning rate
         current_lr = optimizer.param_groups[0]['lr']
