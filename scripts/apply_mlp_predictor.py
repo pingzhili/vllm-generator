@@ -40,18 +40,14 @@ class MLPPredictor(nn.Module):
     def forward(self, x):
         return self.layers(x)
 
-def load_unique_strings(parquet_path: Path, column: str):
+def load_question_strings(parquet_path: Path):
     """Load unique strings from specified column in parquet file."""
     print(f"Loading parquet file: {parquet_path}")
     df = pd.read_parquet(parquet_path)
 
-    if column not in df.columns:
-        raise ValueError(f"Column '{column}' not found. Available columns: {list(df.columns)}")
+    prompt_strings = [response['input'] for response in df.model_response]
 
-    unique_strings = df[column].dropna().unique().tolist()
-    print(f"Found {len(unique_strings)} unique strings in column '{column}'")
-
-    return unique_strings
+    return prompt_strings
 
 
 def load_model_and_tokenizer(model_name: str):
@@ -106,7 +102,6 @@ def main():
     )
 
     parser.add_argument("parquet_file", type=Path, help="Input parquet file")
-    parser.add_argument("column", type=str, help="Column name to extract strings from")
     parser.add_argument("model_name", type=str, help="HuggingFace model name or path")
     parser.add_argument("output_file", type=Path, help="Output json file")
     parser.add_argument("adapter_path", type=Path, help="Output file for hidden states (.pt)")
@@ -115,7 +110,7 @@ def main():
     args = parser.parse_args()
 
     # 1. Load unique strings from parquet
-    unique_strings = load_unique_strings(args.parquet_file, args.column)
+    unique_strings = load_question_strings(args.parquet_file)
 
     # 2. Load model and tokenizer
     model, tokenizer = load_model_and_tokenizer(args.model_name)
