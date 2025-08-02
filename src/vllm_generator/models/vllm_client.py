@@ -91,7 +91,12 @@ class VLLMClient:
         if isinstance(self.generation_config.temperature, list):
             temp = self.generation_config.temperature[sample_idx % len(self.generation_config.temperature)]
         else:
-            temp = temperature or self.generation_config.temperature
+            temp = temperature if temperature is not None else self.generation_config.temperature
+        
+        # Debug logging for parameter tracing
+        self.logger.debug(f"Temperature parameter received: {temperature}")
+        self.logger.debug(f"Config temperature: {self.generation_config.temperature}")
+        self.logger.debug(f"Final temperature used: {temp}")
         
         # Prepare base parameters
         params = {
@@ -131,6 +136,10 @@ class VLLMClient:
         # Add extra_body to params if not empty
         if extra_body:
             params["extra_body"] = extra_body
+        
+        # Debug logging for final parameters
+        self.logger.debug(f"Final parameters being sent: temperature={params['temperature']}, "
+                         f"max_tokens={params['max_tokens']}, top_p={params['top_p']}")
 
         return params
     
