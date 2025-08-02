@@ -157,7 +157,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
 
-    wandb.init(project="adaptive-thinking", name="mlp_predictor")
+    wandb.init(project="adaptive-thinking", name=f"mlp_predictor-{args.hidden_dim}")
     
     # Set random seeds
     torch.manual_seed(args.seed)
