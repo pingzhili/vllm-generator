@@ -174,8 +174,7 @@ def main():
     
     # Load data
     print(f"Loading data from {args.data_path}...")
-    with open(args.data_path, 'rb') as f:
-        data_dict = pickle.load(f)
+    data_dict = torch.load(args.data_path)
     
     # Create dataset
     dataset = EmbeddingDataset(data_dict)
