@@ -148,7 +148,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train MLP predictor on embeddings")
     parser.add_argument("--data-path", type=str, required=True, help="Path to pickled data dictionary")
     parser.add_argument("--output-dir", type=str, default="./mlp_adapter", help="Output directory for model and logs")
-    parser.add_argument("--hidden-dim", type=int, default=512, help="Hidden dimension size")
+    parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden dimension size")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
     parser.add_argument("--learning-rate", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=1e-5, help="Weight decay")
