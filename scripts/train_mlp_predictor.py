@@ -102,8 +102,10 @@ def train_epoch(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        wandb.log({"train_loss": loss.item()})
         
-        total_loss += loss.item() * embeddings.size(0)
+        total_loss += loss.item()
     
     return total_loss / len(dataloader.dataset)
 
@@ -250,8 +252,9 @@ def main():
         # Evaluate
         val_loss, val_mae = evaluate(model, val_loader, criterion, device)
 
-        wandb.log({"train_loss": train_loss, "val_loss": val_loss, "val_mae": val_mae})
-        
+        wandb.log({"val_loss": val_loss, "val_mae": val_mae})
+
+
         # Get current learning rate
         current_lr = optimizer.param_groups[0]['lr']
         
@@ -294,12 +297,6 @@ def main():
                 break
         
         print()
-    
-    # Save training history
-    history_path = output_dir / 'training_history.json'
-    with open(history_path, 'w') as f:
-        json.dump(history, f, indent=2)
-    
 
     # Final evaluation on best model
     print(f"\nLoading best model from epoch {epoch - patience_counter + 1}...")
@@ -316,7 +313,6 @@ def main():
     print(f"\nTraining complete! Models saved to {output_dir}")
     print(f"  - Best model: {best_model_path}")
     print(f"  - Final model: {final_model_path}")
-    print(f"  - Training history: {history_path}")
     print(f"  - Training curves: {output_dir / 'training_curves.png'}")
 
 
